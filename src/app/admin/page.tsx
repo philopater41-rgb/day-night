@@ -618,7 +618,8 @@ export default function AdminPage() {
   };
 
   // SVG Chart Computations
-  const displayedTopItems = topItemsByPeriod[topItemsPeriod] || topItems;
+  const rawTopItems = topItemsByPeriod[topItemsPeriod] || topItems;
+  const displayedTopItems = (rawTopItems || []).filter((item) => (item.qty || 0) > 0);
   const maxItemTotal = displayedTopItems.reduce((max, i) => Math.max(max, i.total), 0) || 1;
   const totalPaymentSum = (payments.cash + payments.instapay) || 1;
   const cashPct = Math.round((payments.cash / totalPaymentSum) * 100);
@@ -1030,7 +1031,14 @@ export default function AdminPage() {
                     {/* Top Selling Items (Custom SVG Horizontal Bar Chart) */}
                     <div className="glass-panel rounded-2xl p-6 lg:col-span-2 space-y-4">
                       <div className="flex items-center justify-between gap-3 flex-row-reverse">
-                        <h3 className="font-bold text-sm text-white text-right">الأصناف الأكثر مبيعًا</h3>
+                        <div className="flex items-center gap-2 flex-row-reverse">
+                          <h3 className="font-bold text-sm text-white text-right">الأصناف الأكثر مبيعًا</h3>
+                          {displayedTopItems.length > 0 && (
+                            <span className="text-[10px] bg-cyan-500/20 text-cyan-400 font-bold px-2 py-0.5 rounded-full border border-cyan-500/30">
+                              {displayedTopItems.length} صنف
+                            </span>
+                          )}
+                        </div>
                         <div className="flex gap-1 rounded-lg bg-slate-900/70 p-1">
                           {([
                             ['today', 'اليوم'],
@@ -1040,7 +1048,7 @@ export default function AdminPage() {
                             <button
                               key={period}
                               onClick={() => setTopItemsPeriod(period)}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${topItemsPeriod === period ? 'bg-cyan-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${topItemsPeriod === period ? 'bg-cyan-500 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
                             >
                               {label}
                             </button>
@@ -1048,19 +1056,27 @@ export default function AdminPage() {
                         </div>
                       </div>
                       
-                      <div className="space-y-4 pt-2">
+                      <div className="space-y-3 pt-2 max-h-[440px] overflow-y-auto pl-1 pr-1 custom-scrollbar">
                         {displayedTopItems.length > 0 ? (
                           displayedTopItems.map((item, idx) => {
-                            const barPct = (item.total / maxItemTotal) * 100;
+                            const barPct = Math.max((item.total / maxItemTotal) * 100, 2);
                             return (
-                              <div key={idx} className="space-y-1.5">
-                                <div className="flex justify-between text-xs font-semibold flex-row-reverse text-right">
-                                  <span>{item.name} <span className="text-gray-500">(عدد {item.qty})</span></span>
-                                  <span className="text-cyan-400">EGP {item.total.toFixed(2)}</span>
+                              <div key={idx} className="space-y-1.5 p-2 rounded-xl bg-slate-900/40 hover:bg-slate-900/70 transition-colors border border-white/5">
+                                <div className="flex justify-between text-xs font-semibold flex-row-reverse text-right items-center">
+                                  <div className="flex items-center gap-2 flex-row-reverse">
+                                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${idx < 3 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-slate-800 text-gray-400'}`}>
+                                      {idx + 1}
+                                    </span>
+                                    <span className="text-white">{item.name}</span>
+                                    <span className="text-cyan-400 text-[11px] font-semibold bg-cyan-950/70 border border-cyan-500/20 px-1.5 py-0.5 rounded">
+                                      {item.qty} {item.qty === 1 ? 'قطعة' : 'قطع'}
+                                    </span>
+                                  </div>
+                                  <span className="text-emerald-400 font-bold">EGP {item.total.toFixed(2)}</span>
                                 </div>
-                                <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden">
+                                <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
                                   <div 
-                                    className="h-full bg-gradient-to-l from-cyan-500 to-purple-600 rounded-full"
+                                    className="h-full bg-gradient-to-l from-cyan-500 to-purple-600 rounded-full transition-all duration-500"
                                     style={{ width: `${barPct}%` }}
                                   ></div>
                                 </div>

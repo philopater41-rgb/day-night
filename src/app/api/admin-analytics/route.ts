@@ -149,7 +149,9 @@ export async function GET() {
           summary[oi.itemId].total += oi.totalPrice;
         }
       }
-      return Object.values(summary).sort((a, b) => b.qty - a.qty).slice(0, 5);
+      return Object.values(summary)
+        .filter((item) => item.qty > 0)
+        .sort((a, b) => b.qty - a.qty || b.total - a.total);
     };
 
     const topSellingToday = summarizeTopItemsFromOrders(todayOrders);
