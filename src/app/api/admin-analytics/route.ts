@@ -33,61 +33,21 @@ export async function GET() {
       },
     });
 
-    // 2. Fetch all completed orders with shift info
-    const completedOrders = await prisma.salesOrder.findMany({
-      where: { status: 'COMPLETED' },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        shift: { select: { id: true, openedAt: true } },
-        items: {
-          include: {
-            item: { select: { name: true } },
+    // 2. Fetch all completed orders, cash transactions, and restock logs in parallel
+    const [completedOrders, allCashTransactions, allRestockLogs] = await Promise.all([
+      prisma.salesOrder.findMany({
+        where: { status: 'COMPLETED' },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          shift: { select: { id: true, openedAt: true, cashierName: true, user: { select: { name: true } } } },
+          items: {
+            include: {
+              item: { select: { name: true } },
+            },
           },
         },
-      },
-    });
-
-    // Helper: determine the operating business date of an order
-    const getOrderOperatingDate = (order: { shift?: { openedAt: Date } | null; createdAt: Date }) => {
-      return order.shift?.openedAt || order.createdAt;
-    };
-
-    // Filter today's and this month's orders based on shift openedAt (or active shift)
-    const todayOrders: typeof completedOrders = [];
-    const monthOrders: typeof completedOrders = [];
-
-    for (const order of completedOrders) {
-      const opDate = getOrderOperatingDate(order);
-      const dayKey = getBusinessDateStr(opDate, false);
-      const monthKey = getBusinessDateStr(opDate, true);
-
-      const isTodayOrder = dayKey === todayStr || (activeShift && order.shiftId === activeShift.id);
-      const isMonthOrder = monthKey === thisMonthStr || isTodayOrder;
-
-      if (isTodayOrder) todayOrders.push(order);
-      if (isMonthOrder) monthOrders.push(order);
-    }
-
-    const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
-    const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
-
-    // 3. Payment Breakdown (Today)
-    let cash = 0;
-    let instapay = 0;
-    for (const order of todayOrders) {
-      if (order.paymentMethod === 'CASH') cash += order.total;
-      else if (order.paymentMethod === 'INSTAPAY') instapay += order.total;
-    }
-
-    // 4. Expenses: Restocks & Cash Transactions
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const [todayRestock, monthlyRestock, allCashTransactions] = await Promise.all([
-      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } }),
-      prisma.restockLog.aggregate({ where: { createdAt: { gte: startOfMonth } }, _sum: { amount: true } }),
+      }),
       prisma.cashTransaction.findMany({
-        take: 100,
         orderBy: { createdAt: 'desc' },
         include: {
           shift: {
@@ -99,45 +59,400 @@ export async function GET() {
           },
         },
       }),
+      prisma.restockLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          rawMaterial: {
+            select: { name: true, purchaseUnit: true },
+          },
+        },
+      }),
     ]);
 
-    let todayCashPayouts = 0;
-    let monthlyCashPayouts = 0;
+    // Helper: determine the operating business date of an order
+    const getOrderOperatingDate = (order: { shift?: { openedAt: Date } | null; createdAt: Date }) => {
+      return order.shift?.openedAt || order.createdAt;
+    };
 
-    for (const tx of allCashTransactions) {
+    // Helper: determine the operating business date of a cash transaction
+    const getTxOperatingDate = (tx: { shift?: { openedAt: Date } | null; createdAt: Date }) => {
+      return tx.shift?.openedAt || tx.createdAt;
+    };
+
+    // 3. Process Daily & Monthly Sales
+    interface PeriodSales {
+      period: string;
+      total: number;
+      orders: number;
+      cashTotal: number;
+      instaPayTotal: number;
+    }
+
+    interface ItemSoldSummary {
+      itemId: string;
+      name: string;
+      qty: number;
+      total: number;
+      unitPrice: number;
+    }
+
+    const dailySalesMap = new Map<string, PeriodSales>();
+    const monthlySalesMap = new Map<string, PeriodSales>();
+    const dayItemsSoldMap = new Map<string, Map<string, ItemSoldSummary>>();
+    const monthItemsSoldMap = new Map<string, Map<string, ItemSoldSummary>>();
+
+    const todayOrders: typeof completedOrders = [];
+    const monthOrders: typeof completedOrders = [];
+
+    for (const order of completedOrders) {
+      const opDate = getOrderOperatingDate(order);
+      const dayKey = getBusinessDateStr(opDate, false);
+      const monthKey = getBusinessDateStr(opDate, true);
+
+      // Daily Sales map
+      const daySummary = dailySalesMap.get(dayKey) || {
+        period: dayKey,
+        total: 0,
+        orders: 0,
+        cashTotal: 0,
+        instaPayTotal: 0,
+      };
+      daySummary.total += order.total;
+      daySummary.orders += 1;
+      if (order.paymentMethod === 'CASH') daySummary.cashTotal += order.total;
+      else if (order.paymentMethod === 'INSTAPAY') daySummary.instaPayTotal += order.total;
+      dailySalesMap.set(dayKey, daySummary);
+
+      // Monthly Sales map
+      const monthSummary = monthlySalesMap.get(monthKey) || {
+        period: monthKey,
+        total: 0,
+        orders: 0,
+        cashTotal: 0,
+        instaPayTotal: 0,
+      };
+      monthSummary.total += order.total;
+      monthSummary.orders += 1;
+      if (order.paymentMethod === 'CASH') monthSummary.cashTotal += order.total;
+      else if (order.paymentMethod === 'INSTAPAY') monthSummary.instaPayTotal += order.total;
+      monthlySalesMap.set(monthKey, monthSummary);
+
+      // Aggregate item-level sales for this day and month
+      let dItemMap = dayItemsSoldMap.get(dayKey);
+      if (!dItemMap) {
+        dItemMap = new Map<string, ItemSoldSummary>();
+        dayItemsSoldMap.set(dayKey, dItemMap);
+      }
+      let mItemMap = monthItemsSoldMap.get(monthKey);
+      if (!mItemMap) {
+        mItemMap = new Map<string, ItemSoldSummary>();
+        monthItemsSoldMap.set(monthKey, mItemMap);
+      }
+
+      for (const oi of order.items) {
+        const itemName = oi.item?.name || 'صنف';
+        // Day
+        const curDayItem = dItemMap.get(oi.itemId) || {
+          itemId: oi.itemId,
+          name: itemName,
+          qty: 0,
+          total: 0,
+          unitPrice: oi.unitPrice,
+        };
+        curDayItem.qty += oi.qty;
+        curDayItem.total += oi.totalPrice;
+        dItemMap.set(oi.itemId, curDayItem);
+
+        // Month
+        const curMonthItem = mItemMap.get(oi.itemId) || {
+          itemId: oi.itemId,
+          name: itemName,
+          qty: 0,
+          total: 0,
+          unitPrice: oi.unitPrice,
+        };
+        curMonthItem.qty += oi.qty;
+        curMonthItem.total += oi.totalPrice;
+        mItemMap.set(oi.itemId, curMonthItem);
+      }
+
+      // Check if order belongs to today or this month
+      const isTodayOrder = dayKey === todayStr || (activeShift && order.shiftId === activeShift.id);
+      const isMonthOrder = monthKey === thisMonthStr || isTodayOrder;
+      if (isTodayOrder) todayOrders.push(order);
+      if (isMonthOrder) monthOrders.push(order);
+    }
+
+    const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
+    const monthlySales = monthOrders.reduce((sum, order) => sum + order.total, 0);
+
+    // Payment Breakdown for today
+    let todayCash = 0;
+    let todayInstapay = 0;
+    for (const order of todayOrders) {
+      if (order.paymentMethod === 'CASH') todayCash += order.total;
+      else if (order.paymentMethod === 'INSTAPAY') todayInstapay += order.total;
+    }
+
+    // 4. Process Daily & Monthly Expenses
+    interface ExpenseItemPayout {
+      id: string;
+      shiftId: string;
+      amount: number;
+      reason: string;
+      cashierName: string;
+      createdAt: Date;
+    }
+
+    interface ExpenseItemRestock {
+      id: string;
+      amount: number;
+      quantity: number;
+      materialName: string;
+      purchaseUnit: string;
+      createdAt: Date;
+    }
+
+    interface DailyExpenseRecord {
+      period: string; // YYYY-MM-DD
+      total: number;
+      payoutsTotal: number;
+      restocksTotal: number;
+      count: number;
+      payouts: ExpenseItemPayout[];
+      restocks: ExpenseItemRestock[];
+    }
+
+    interface MonthlyExpenseRecord {
+      period: string; // YYYY-MM
+      total: number;
+      payoutsTotal: number;
+      restocksTotal: number;
+      count: number;
+      payouts: ExpenseItemPayout[];
+      restocks: ExpenseItemRestock[];
+      categoriesSummary?: Array<{ name: string; type: 'PAYOUT' | 'RESTOCK'; total: number; count: number }>;
+    }
+
+    const dailyExpensesMap = new Map<string, DailyExpenseRecord>();
+    const monthlyExpensesMap = new Map<string, MonthlyExpenseRecord>();
+
+    const getOrCreateDailyExpense = (dayKey: string): DailyExpenseRecord => {
+      let rec = dailyExpensesMap.get(dayKey);
+      if (!rec) {
+        rec = {
+          period: dayKey,
+          total: 0,
+          payoutsTotal: 0,
+          restocksTotal: 0,
+          count: 0,
+          payouts: [],
+          restocks: [],
+        };
+        dailyExpensesMap.set(dayKey, rec);
+      }
+      return rec;
+    };
+
+    const getOrCreateMonthlyExpense = (monthKey: string): MonthlyExpenseRecord => {
+      let rec = monthlyExpensesMap.get(monthKey);
+      if (!rec) {
+        rec = {
+          period: monthKey,
+          total: 0,
+          payoutsTotal: 0,
+          restocksTotal: 0,
+          count: 0,
+          payouts: [],
+          restocks: [],
+        };
+        monthlyExpensesMap.set(monthKey, rec);
+      }
+      return rec;
+    };
+
+    // Process Cash Transactions (Payouts are expenses)
+    const formattedCashTransactions = allCashTransactions.map((tx) => ({
+      id: tx.id,
+      shiftId: tx.shiftId,
+      type: tx.type,
+      amount: tx.amount,
+      reason: tx.reason,
+      createdAt: tx.createdAt,
+      cashierName: tx.shift?.cashierName || tx.shift?.user?.name || 'كاشير',
+      operatingDate: getTxOperatingDate(tx),
+    }));
+
+    for (const tx of formattedCashTransactions) {
       if (tx.type === 'PAYOUT') {
-        const txOpDate = tx.shift?.openedAt || tx.createdAt;
-        const txDayKey = getBusinessDateStr(txOpDate, false);
-        const txMonthKey = getBusinessDateStr(txOpDate, true);
+        const dayKey = getBusinessDateStr(tx.operatingDate, false);
+        const monthKey = getBusinessDateStr(tx.operatingDate, true);
 
-        const isTodayTx = txDayKey === todayStr || (activeShift && tx.shiftId === activeShift.id);
-        const isMonthTx = txMonthKey === thisMonthStr || isTodayTx;
+        const payoutItem: ExpenseItemPayout = {
+          id: tx.id,
+          shiftId: tx.shiftId,
+          amount: tx.amount,
+          reason: tx.reason,
+          cashierName: tx.cashierName,
+          createdAt: tx.createdAt,
+        };
 
-        if (isTodayTx) todayCashPayouts += tx.amount;
-        if (isMonthTx) monthlyCashPayouts += tx.amount;
+        const dRec = getOrCreateDailyExpense(dayKey);
+        dRec.total += tx.amount;
+        dRec.payoutsTotal += tx.amount;
+        dRec.count += 1;
+        dRec.payouts.push(payoutItem);
+
+        const mRec = getOrCreateMonthlyExpense(monthKey);
+        mRec.total += tx.amount;
+        mRec.payoutsTotal += tx.amount;
+        mRec.count += 1;
+        mRec.payouts.push(payoutItem);
       }
     }
 
-    const todayExpenses = (todayRestock._sum.amount || 0) + todayCashPayouts;
-    const monthlyExpenses = (monthlyRestock._sum.amount || 0) + monthlyCashPayouts;
+    // Process Restock Logs (Purchases are expenses)
+    const formattedRestockLogs = allRestockLogs.map((log) => ({
+      id: log.id,
+      amount: log.amount,
+      quantity: log.quantity,
+      createdAt: log.createdAt,
+      materialName: log.rawMaterial?.name || 'خامة مخزن',
+      purchaseUnit: log.rawMaterial?.purchaseUnit || 'وحدة',
+      rawMaterial: {
+        name: log.rawMaterial?.name || 'خامة مخزن',
+        purchaseUnit: log.rawMaterial?.purchaseUnit || 'وحدة',
+      },
+    }));
+
+    for (const log of formattedRestockLogs) {
+      const dayKey = getBusinessDateStr(log.createdAt, false);
+      const monthKey = getBusinessDateStr(log.createdAt, true);
+
+      const restockItem: ExpenseItemRestock = {
+        id: log.id,
+        amount: log.amount,
+        quantity: log.quantity,
+        materialName: log.materialName,
+        purchaseUnit: log.purchaseUnit,
+        createdAt: log.createdAt,
+      };
+
+      const dRec = getOrCreateDailyExpense(dayKey);
+      dRec.total += log.amount;
+      dRec.restocksTotal += log.amount;
+      dRec.count += 1;
+      dRec.restocks.push(restockItem);
+
+      const mRec = getOrCreateMonthlyExpense(monthKey);
+      mRec.total += log.amount;
+      mRec.restocksTotal += log.amount;
+      mRec.count += 1;
+      mRec.restocks.push(restockItem);
+    }
+
+    // Sort Daily Expenses descending
+    const dailyExpenses = [...dailyExpensesMap.values()].sort((a, b) => b.period.localeCompare(a.period));
+
+    // Sort Monthly Expenses descending and build categoriesSummary
+    const monthlyExpensesHistory = [...monthlyExpensesMap.values()]
+      .sort((a, b) => b.period.localeCompare(a.period))
+      .map((mRec) => {
+        const catMap = new Map<string, { name: string; type: 'PAYOUT' | 'RESTOCK'; total: number; count: number }>();
+        for (const p of mRec.payouts) {
+          const key = `P_${p.reason || 'مسحوبات نقدية'}`;
+          const cur = catMap.get(key) || { name: p.reason || 'مسحوبات نقدية', type: 'PAYOUT', total: 0, count: 0 };
+          cur.total += p.amount;
+          cur.count += 1;
+          catMap.set(key, cur);
+        }
+        for (const r of mRec.restocks) {
+          const key = `R_${r.materialName || 'خامة مخزن'}`;
+          const cur = catMap.get(key) || { name: r.materialName || 'خامة مخزن', type: 'RESTOCK', total: 0, count: 0 };
+          cur.total += r.amount;
+          cur.count += 1;
+          catMap.set(key, cur);
+        }
+        return {
+          ...mRec,
+          categoriesSummary: [...catMap.values()].sort((a, b) => b.total - a.total),
+        };
+      });
+
+    // Today & Month expense totals
+    const todayExpenses = dailyExpensesMap.get(todayStr)?.total || 0;
+    const monthlyExpenses = monthlyExpensesMap.get(thisMonthStr)?.total || 0;
     const todayNet = todaySales - todayExpenses;
     const monthlyNet = monthlySales - monthlyExpenses;
 
-    // 5. Summarize Daily Sales & Monthly Sales by Shift Operating Date
-    const summarizeOrdersByShiftDate = (monthly = false) => {
-      const summaries = new Map<string, { period: string; total: number; orders: number }>();
-      for (const order of completedOrders) {
-        const opDate = getOrderOperatingDate(order);
-        const period = getBusinessDateStr(opDate, monthly);
-        const current = summaries.get(period) || { period, total: 0, orders: 0 };
-        current.total += order.total;
-        current.orders += 1;
-        summaries.set(period, current);
-      }
-      return [...summaries.values()].sort((a, b) => b.period.localeCompare(a.period));
-    };
+    // 5. Build Combined Comprehensive Daily Reports (Sales + Expenses + Net + ItemsSold)
+    const allUniqueDays = new Set<string>([
+      todayStr,
+      ...dailySalesMap.keys(),
+      ...dailyExpensesMap.keys(),
+    ]);
 
-    // 6. Top Selling Items
+    const dailyReports = [...allUniqueDays]
+      .sort((a, b) => b.localeCompare(a))
+      .map((dateStr) => {
+        const sales = dailySalesMap.get(dateStr) || { total: 0, orders: 0, cashTotal: 0, instaPayTotal: 0, period: dateStr };
+        const expenses = dailyExpensesMap.get(dateStr) || { total: 0, payoutsTotal: 0, restocksTotal: 0, count: 0, payouts: [], restocks: [], period: dateStr };
+        const dayItems = dayItemsSoldMap.get(dateStr)
+          ? [...dayItemsSoldMap.get(dateStr)!.values()].sort((a, b) => b.qty - a.qty || b.total - a.total)
+          : [];
+        return {
+          date: dateStr,
+          ordersCount: sales.orders,
+          totalSales: sales.total,
+          cashSales: sales.cashTotal,
+          instaPaySales: sales.instaPayTotal,
+          totalExpenses: expenses.total,
+          payoutsTotal: expenses.payoutsTotal,
+          restocksTotal: expenses.restocksTotal,
+          expensesCount: expenses.count,
+          netProfit: sales.total - expenses.total,
+          payouts: expenses.payouts,
+          restocks: expenses.restocks,
+          itemsSold: dayItems,
+        };
+      });
+
+    // 6. Build Combined Comprehensive Monthly Reports (with ItemsSold and Days array)
+    const allUniqueMonths = new Set<string>([
+      thisMonthStr,
+      ...monthlySalesMap.keys(),
+      ...monthlyExpensesMap.keys(),
+    ]);
+
+    const monthlyReports = [...allUniqueMonths]
+      .sort((a, b) => b.localeCompare(a))
+      .map((mStr) => {
+        const sales = monthlySalesMap.get(mStr) || { total: 0, orders: 0, cashTotal: 0, instaPayTotal: 0, period: mStr };
+        const expenses = monthlyExpensesMap.get(mStr) || { total: 0, payoutsTotal: 0, restocksTotal: 0, count: 0, payouts: [], restocks: [], period: mStr };
+        const monthItems = monthItemsSoldMap.get(mStr)
+          ? [...monthItemsSoldMap.get(mStr)!.values()].sort((a, b) => b.qty - a.qty || b.total - a.total)
+          : [];
+        const daysInMonth = dailyReports.filter((d) => d.date.startsWith(mStr));
+        return {
+          month: mStr,
+          ordersCount: sales.orders,
+          totalSales: sales.total,
+          cashSales: sales.cashTotal,
+          instaPaySales: sales.instaPayTotal,
+          totalExpenses: expenses.total,
+          payoutsTotal: expenses.payoutsTotal,
+          restocksTotal: expenses.restocksTotal,
+          expensesCount: expenses.count,
+          netProfit: sales.total - expenses.total,
+          itemsSold: monthItems,
+          days: daysInMonth,
+          daysCount: daysInMonth.length,
+          payouts: expenses.payouts || [],
+          restocks: expenses.restocks || [],
+        };
+      });
+
+    // 7. Summarize Top Items
     const summarizeTopItemsFromOrders = (ordersList: typeof completedOrders) => {
       const summary: { [key: string]: { name: string; qty: number; total: number } } = {};
       for (const ord of ordersList) {
@@ -158,7 +473,7 @@ export async function GET() {
     const topSellingMonth = summarizeTopItemsFromOrders(monthOrders);
     const topSellingAll = summarizeTopItemsFromOrders(completedOrders);
 
-    // 7. Low Stock Alerts
+    // 8. Low Stock Alerts
     const rawMaterials = await prisma.rawMaterial.findMany({
       where: {
         name: {
@@ -173,6 +488,7 @@ export async function GET() {
         },
       },
     });
+
     const lowStockAlerts = rawMaterials
       .filter((mat) => mat.stockQty < mat.minStockLevel)
       .map((mat) => ({
@@ -183,7 +499,7 @@ export async function GET() {
         deductUnit: mat.deductUnit,
       }));
 
-    // 8. Recent Sales orders list
+    // 9. Recent Sales Orders
     const recentOrders = await prisma.salesOrder.findMany({
       take: 10,
       orderBy: { createdAt: 'desc' },
@@ -192,7 +508,7 @@ export async function GET() {
       },
     });
 
-    // 9. Shift Summaries
+    // 10. Shift Summaries
     const shifts = await prisma.shift.findMany({
       orderBy: { openedAt: 'desc' },
       include: {
@@ -200,6 +516,7 @@ export async function GET() {
         orders: { select: { status: true, total: true, paymentMethod: true } },
       },
     });
+
     const shiftSummaries = shifts.map((shift) => {
       const shiftCompletedOrders = shift.orders.filter((order) => order.status === 'COMPLETED');
       return {
@@ -228,12 +545,14 @@ export async function GET() {
         monthlyExpenses,
         todayNet,
         monthlyNet,
+        todayOrdersCount: todayOrders.length,
+        monthlyOrdersCount: monthOrders.length,
         activeShiftUser: activeShift ? (activeShift.cashierName || activeShift.user.name) : 'No Active Shift',
         activeShiftExpected: activeShift ? activeShift.expectedCash : 0,
       },
       paymentBreakdown: {
-        cash,
-        instapay,
+        cash: todayCash,
+        instapay: todayInstapay,
       },
       topSellingItems: topSellingToday,
       topSellingItemsByPeriod: {
@@ -243,18 +562,18 @@ export async function GET() {
       },
       lowStockAlerts,
       recentOrders,
-      dailySales: summarizeOrdersByShiftDate(false),
-      monthlySalesHistory: summarizeOrdersByShiftDate(true),
+      // Sales summaries
+      dailySales: [...dailySalesMap.values()].sort((a, b) => b.period.localeCompare(a.period)),
+      monthlySalesHistory: [...monthlySalesMap.values()].sort((a, b) => b.period.localeCompare(a.period)),
+      // Expenses summaries
+      dailyExpenses,
+      monthlyExpensesHistory,
+      // Comprehensive Combined Reports
+      dailyReports,
+      monthlyReports,
       shiftSummaries,
-      cashTransactions: allCashTransactions.map((tx) => ({
-        id: tx.id,
-        shiftId: tx.shiftId,
-        type: tx.type,
-        amount: tx.amount,
-        reason: tx.reason,
-        createdAt: tx.createdAt,
-        cashierName: tx.shift?.cashierName || tx.shift?.user?.name || 'كاشير',
-      })),
+      cashTransactions: formattedCashTransactions,
+      restockLogs: formattedRestockLogs,
     });
   } catch (error: any) {
     console.error('GET admin analytics error:', error);

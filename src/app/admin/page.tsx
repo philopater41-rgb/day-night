@@ -6,7 +6,8 @@ import { useAppStore } from '@/lib/store';
 import { 
   TrendingUp, Package, AlertTriangle, Users, LogOut, 
   Trash2, DollarSign, CheckCircle2, RefreshCw, 
-  ChevronRight, Calendar, PlusCircle, ShoppingBag, X, Menu, Pencil
+  ChevronRight, Calendar, PlusCircle, ShoppingBag, X, Menu, Pencil,
+  FileText, CalendarDays, Filter, Eye, Printer, Search, ArrowUpRight, ArrowDownRight, Wallet, Receipt, Coins, ShoppingCart
 } from 'lucide-react';
 
 interface KPIState {
@@ -75,6 +76,7 @@ interface CashTransactionItem {
   reason: string;
   createdAt: string;
   cashierName: string;
+  operatingDate?: string;
 }
 
 interface OrderDetails extends RecentOrder {
@@ -119,17 +121,105 @@ interface ShiftSummary {
   varianceInstaPay: number;
 }
 
+interface DailyExpenseSummary {
+  period: string; // YYYY-MM-DD
+  total: number;
+  payoutsTotal: number;
+  restocksTotal: number;
+  count: number;
+  payouts?: Array<{ id: string; shiftId: string; amount: number; reason: string; cashierName: string; createdAt: string }>;
+  restocks?: Array<{ id: string; amount: number; quantity: number; materialName: string; purchaseUnit: string; createdAt: string }>;
+}
+
+interface ItemSoldSummary {
+  itemId: string;
+  name: string;
+  qty: number;
+  total: number;
+  unitPrice: number;
+}
+
+interface MonthlyExpenseSummary {
+  period: string; // YYYY-MM
+  total: number;
+  payoutsTotal: number;
+  restocksTotal: number;
+  count: number;
+  payouts?: Array<{ id: string; shiftId: string; amount: number; reason: string; cashierName: string; createdAt: string }>;
+  restocks?: Array<{ id: string; amount: number; quantity: number; materialName: string; purchaseUnit: string; createdAt: string }>;
+  categoriesSummary?: Array<{ name: string; type: 'PAYOUT' | 'RESTOCK'; total: number; count: number }>;
+}
+
+interface DailyReportItem {
+  date: string;
+  ordersCount: number;
+  totalSales: number;
+  cashSales: number;
+  instaPaySales: number;
+  totalExpenses: number;
+  payoutsTotal: number;
+  restocksTotal: number;
+  expensesCount: number;
+  netProfit: number;
+  payouts?: Array<{ id: string; shiftId: string; amount: number; reason: string; cashierName: string; createdAt: string }>;
+  restocks?: Array<{ id: string; amount: number; quantity: number; materialName: string; purchaseUnit: string; createdAt: string }>;
+  itemsSold?: ItemSoldSummary[];
+}
+
+interface MonthlyReportItem {
+  month: string;
+  ordersCount: number;
+  totalSales: number;
+  cashSales: number;
+  instaPaySales: number;
+  totalExpenses: number;
+  payoutsTotal: number;
+  restocksTotal: number;
+  expensesCount: number;
+  netProfit: number;
+  itemsSold?: ItemSoldSummary[];
+  days?: DailyReportItem[];
+  daysCount?: number;
+  payouts?: Array<{ id: string; shiftId: string; amount: number; reason: string; cashierName: string; createdAt: string }>;
+  restocks?: Array<{ id: string; amount: number; quantity: number; materialName: string; purchaseUnit: string; createdAt: string }>;
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const { user, logout } = useAppStore();
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'expenses'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'reports' | 'inventory' | 'recipes' | 'expenses'>('dashboard');
   const [cashTransactions, setCashTransactions] = useState<CashTransactionItem[]>([]);
   const [expenseSearch, setExpenseSearch] = useState('');
   const [expenseFilterType, setExpenseFilterType] = useState<'ALL' | 'PAYOUTS' | 'RESTOCKS'>('ALL');
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [todayLabel, setTodayLabel] = useState('');
+
+  // Daily & Monthly Expenses & Combined Reports
+  const [dailyExpenses, setDailyExpenses] = useState<DailyExpenseSummary[]>([]);
+  const [monthlyExpensesHistory, setMonthlyExpensesHistory] = useState<MonthlyExpenseSummary[]>([]);
+  const [dailyReports, setDailyReports] = useState<DailyReportItem[]>([]);
+  const [monthlyReports, setMonthlyReports] = useState<MonthlyReportItem[]>([]);
+
+  // Expenses Tab dedicated Sub-tabs: 'daily' vs 'monthly'
+  const [expensesSubTab, setExpensesSubTab] = useState<'daily' | 'monthly'>('daily');
+  const [selectedExpenseDate, setSelectedExpenseDate] = useState<string>('');
+  const [selectedExpenseMonth, setSelectedExpenseMonth] = useState<string>('');
+  const [monthlyExpensesViewMode, setMonthlyExpensesViewMode] = useState<'breakdown' | 'days' | 'transactions'>('breakdown');
+
+  // Reports Tab states
+  const [reportsSubTab, setReportsSubTab] = useState<'daily' | 'monthly'>('daily');
+  const [selectedReportDate, setSelectedReportDate] = useState<string>('');
+  const [selectedReportMonth, setSelectedReportMonth] = useState<string>('');
+  const [dailyReportItemSearch, setDailyReportItemSearch] = useState<string>('');
+  const [monthlyReportItemSearch, setMonthlyReportItemSearch] = useState<string>('');
+  const [monthlyReportViewMode, setMonthlyReportViewMode] = useState<'items' | 'days' | 'expenses'>('items');
+  const [showDayIndividualOrders, setShowDayIndividualOrders] = useState<boolean>(false);
+  const [selectedDayReportOrders, setSelectedDayReportOrders] = useState<any[]>([]);
+  const [loadingDayReportOrders, setLoadingDayReportOrders] = useState<boolean>(false);
+  const [dayReportSearch, setDayReportSearch] = useState<string>('');
+  const [dayReportActiveSection, setDayReportActiveSection] = useState<'all' | 'orders' | 'expenses'>('all');
 
   // API Data States
   const [kpis, setKpis] = useState<KPIState>({
@@ -246,6 +336,25 @@ export default function AdminPage() {
         setRecentOrders(data.recentOrders);
         setDailySales(data.dailySales);
         setMonthlySalesHistory(data.monthlySalesHistory);
+        setDailyExpenses(data.dailyExpenses || []);
+        setMonthlyExpensesHistory(data.monthlyExpensesHistory || []);
+        setDailyReports(data.dailyReports || []);
+        setMonthlyReports(data.monthlyReports || []);
+        if (data.restockLogs) {
+          setRestockLogs(data.restockLogs);
+        }
+        if (data.dailyReports?.length) {
+          setSelectedReportDate((prev) => prev || data.dailyReports[0].date);
+        }
+        if (data.monthlyReports?.length) {
+          setSelectedReportMonth((prev) => prev || data.monthlyReports[0].month);
+        }
+        if (data.dailyExpenses?.length) {
+          setSelectedExpenseDate((prev) => prev || data.dailyExpenses[0].period);
+        }
+        if (data.monthlyExpensesHistory?.length) {
+          setSelectedExpenseMonth((prev) => prev || data.monthlyExpensesHistory[0].period);
+        }
         setShiftSummaries(data.shiftSummaries);
         setCashTransactions(data.cashTransactions || []);
         const attendanceRes = await fetch('/api/attendance');
@@ -289,6 +398,54 @@ export default function AdminPage() {
       setMonthlyRestockTotal(data.monthlyTotal || 0);
     } catch (error) { console.error(error); }
   }, []);
+
+  const fetchDayReportOrders = useCallback(async (dateStr: string) => {
+    if (!dateStr) return;
+    setLoadingDayReportOrders(true);
+    try {
+      const res = await fetch(`/api/sales-orders?date=${encodeURIComponent(dateStr)}`);
+      const data = await res.json();
+      setSelectedDayReportOrders(data.orders || []);
+    } catch (e) {
+      console.error('Error fetching day report orders:', e);
+    } finally {
+      setLoadingDayReportOrders(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedReportDate && (activeTab === 'reports' || activeTab === 'dashboard')) {
+      fetchDayReportOrders(selectedReportDate);
+    }
+  }, [selectedReportDate, activeTab, fetchDayReportOrders]);
+
+  const formatDateArabic = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr.includes('T') ? dateStr : `${dateStr}T12:00:00`);
+      return d.toLocaleDateString('ar-EG', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatMonthArabic = (monthStr: string) => {
+    if (!monthStr) return '';
+    try {
+      const d = new Date(`${monthStr}-01T12:00:00`);
+      return d.toLocaleDateString('ar-EG', {
+        year: 'numeric',
+        month: 'long',
+      });
+    } catch {
+      return monthStr;
+    }
+  };
 
   const openPeriodOrders = async (period: string, title: string, type: 'date' | 'month' | 'shift' = 'date') => {
     setPeriodOrdersTitle(title);
@@ -348,7 +505,7 @@ export default function AdminPage() {
 
   // Trigger loading based on selected tab
   useEffect(() => {
-    if (activeTab === 'dashboard') {
+    if (activeTab === 'dashboard' || activeTab === 'reports' || activeTab === 'expenses') {
       fetchAnalytics();
     } else if (activeTab === 'inventory') {
       fetchInventory();
@@ -680,6 +837,18 @@ export default function AdminPage() {
                 </button>
 
                 <button
+                  onClick={() => { setActiveTab('reports'); setShowMobileSidebar(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                    activeTab === 'reports'
+                      ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <FileText className="w-4 h-4 shrink-0" />
+                  <span className="w-full text-right">التقرير المالي (اليومي والشهري)</span>
+                </button>
+
+                <button
                   onClick={() => { setActiveTab('inventory'); setShowMobileSidebar(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
                     activeTab === 'inventory'
@@ -746,7 +915,7 @@ export default function AdminPage() {
       )}
 
       {/* 1. Left Navigation Sidebar (Hidden on mobile) */}
-      <aside className="hidden md:flex w-64 bg-[#0c1424] border-l border-white/5 flex-col justify-between p-6 shrink-0">
+      <aside className="hidden md:flex w-64 bg-[#0c1424] border-l border-white/5 flex-col justify-between p-6 shrink-0 no-print">
         <div className="space-y-8">
           {/* Brand header */}
           <div className="flex items-center gap-3 justify-start flex-row-reverse">
@@ -771,6 +940,18 @@ export default function AdminPage() {
             >
               <TrendingUp className="w-4 h-4 shrink-0" />
               <span className="w-full text-right">تحليلات المبيعات والأرباح</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all flex-row-reverse ${
+                activeTab === 'reports'
+                  ? 'bg-cyan-500/15 text-cyan-400 border-r-4 border-cyan-500'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-white'
+              }`}
+            >
+              <FileText className="w-4 h-4 shrink-0" />
+              <span className="w-full text-right">التقرير المالي (اليومي والشهري)</span>
             </button>
 
             <button
@@ -841,7 +1022,7 @@ export default function AdminPage() {
       <main className="flex-1 flex flex-col overflow-y-auto md:overflow-hidden">
         
         {/* Top Header Banner */}
-        <header className="h-16 border-b border-white/5 px-4 md:px-8 flex items-center justify-between shrink-0 bg-[#090d16] flex-row-reverse">
+        <header className="h-16 border-b border-white/5 px-4 md:px-8 flex items-center justify-between shrink-0 bg-[#090d16] flex-row-reverse no-print">
           <div className="flex items-center gap-2">
             <Calendar className="w-4 h-4 text-gray-500" />
             <span className="text-[10px] sm:text-xs text-gray-400 font-medium">
@@ -857,7 +1038,7 @@ export default function AdminPage() {
         </header>
 
         {/* Tab content viewports */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-8 space-y-4 sm:space-y-6">
           
           {/* TAB 1: EXECUTIVE ANALYTICS DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -934,55 +1115,132 @@ export default function AdminPage() {
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                     <div className="glass-panel rounded-2xl p-5 text-right">
                       <div className="flex items-center justify-between flex-row-reverse">
-                        <h3 className="font-bold text-sm text-white">المبيعات حسب اليوم</h3>
-                        <span className="text-[10px] text-cyan-400 font-semibold animate-pulse">اضغط لعرض الفواتير ↗</span>
+                        <h3 className="font-bold text-sm text-white">المبيعات والمصروفات حسب اليوم</h3>
+                        <button
+                          onClick={() => setActiveTab('reports')}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 font-semibold cursor-pointer"
+                        >
+                          عرض التقرير اليومي الشامل ↗
+                        </button>
                       </div>
                       <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
-                        {dailySales.length ? dailySales.map((day) => (
-                          <button
-                            key={day.period}
-                            type="button"
-                            onClick={() => openPeriodOrders(day.period, `فواتير يوم: ${new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}`, 'date')}
-                            className="w-full flex justify-between items-center rounded-xl bg-white/5 hover:bg-cyan-500/15 border border-white/5 hover:border-cyan-500/40 px-3.5 py-2.5 text-xs flex-row-reverse transition-all group text-right cursor-pointer"
+                        {dailyReports.length ? dailyReports.map((day) => (
+                          <div
+                            key={day.date}
+                            className="w-full rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-cyan-500/40 p-3 text-xs transition-all text-right"
                           >
-                            <span className="text-gray-300 group-hover:text-white font-medium">
-                              {new Date(`${day.period}T12:00:00`).toLocaleDateString('ar-EG')}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-cyan-400 font-mono">EGP {day.total.toFixed(2)}</span>
-                              <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 group-hover:bg-cyan-500 group-hover:text-black font-semibold text-[10px] transition-all">
-                                {day.orders} فاتورة ↗
+                            <div className="flex justify-between items-center flex-row-reverse">
+                              <span className="text-white font-bold">
+                                {formatDateArabic(day.date)}
                               </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openPeriodOrders(day.date, `فواتير يوم: ${formatDateArabic(day.date)}`, 'date')}
+                                  className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500 hover:text-black font-semibold text-[10px] transition-all cursor-pointer"
+                                  title="عرض فواتير هذا اليوم"
+                                >
+                                  {day.ordersCount} فاتورة ↗
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveTab('reports');
+                                    setReportsSubTab('daily');
+                                    setSelectedReportDate(day.date);
+                                  }}
+                                  className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 hover:bg-purple-500 hover:text-white font-semibold text-[10px] transition-all cursor-pointer"
+                                  title="فتح تقرير اليوم بالتفصيل"
+                                >
+                                  التقرير ↗
+                                </button>
+                              </div>
                             </div>
-                          </button>
-                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
+                            <div className="mt-2 grid grid-cols-3 gap-1 pt-1.5 border-t border-white/5 text-[11px] text-center">
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">المبيعات</span>
+                                <span className="font-bold text-cyan-400 font-mono">EGP {day.totalSales.toFixed(1)}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">المصروفات</span>
+                                <span className="font-bold text-rose-400 font-mono">EGP {day.totalExpenses.toFixed(1)}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">الصافي</span>
+                                <span className={`font-bold font-mono ${day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  EGP {day.netProfit.toFixed(1)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد سجلات مسجلة.</p>}
                       </div>
                     </div>
 
                     <div className="glass-panel rounded-2xl p-5 text-right">
                       <div className="flex items-center justify-between flex-row-reverse">
-                        <h3 className="font-bold text-sm text-white">المبيعات حسب الشهر</h3>
-                        <span className="text-[10px] text-purple-400 font-semibold animate-pulse">اضغط لعرض الفواتير ↗</span>
+                        <h3 className="font-bold text-sm text-white">المبيعات والمصروفات حسب الشهر</h3>
+                        <button
+                          onClick={() => {
+                            setActiveTab('reports');
+                            setReportsSubTab('monthly');
+                          }}
+                          className="text-[10px] text-purple-400 hover:text-purple-300 font-semibold cursor-pointer"
+                        >
+                          عرض التقرير الشهري الشامل ↗
+                        </button>
                       </div>
                       <div className="mt-4 max-h-72 overflow-y-auto space-y-2 pr-1">
-                        {monthlySalesHistory.length ? monthlySalesHistory.map((month) => (
-                          <button
-                            key={month.period}
-                            type="button"
-                            onClick={() => openPeriodOrders(month.period, `فواتير شهر: ${new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}`, 'month')}
-                            className="w-full flex justify-between items-center rounded-xl bg-white/5 hover:bg-purple-500/15 border border-white/5 hover:border-purple-500/40 px-3.5 py-2.5 text-xs flex-row-reverse transition-all group text-right cursor-pointer"
+                        {monthlyReports.length ? monthlyReports.map((month) => (
+                          <div
+                            key={month.month}
+                            className="w-full rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-purple-500/40 p-3 text-xs transition-all text-right"
                           >
-                            <span className="text-gray-300 group-hover:text-white font-medium">
-                              {new Date(`${month.period}-01T12:00:00`).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' })}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-purple-400 font-mono">EGP {month.total.toFixed(2)}</span>
-                              <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 group-hover:bg-purple-500 group-hover:text-black font-semibold text-[10px] transition-all">
-                                {month.orders} فاتورة ↗
+                            <div className="flex justify-between items-center flex-row-reverse">
+                              <span className="text-white font-bold">
+                                {formatMonthArabic(month.month)}
                               </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openPeriodOrders(month.month, `فواتير شهر: ${formatMonthArabic(month.month)}`, 'month')}
+                                  className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 hover:bg-purple-500 hover:text-white font-semibold text-[10px] transition-all cursor-pointer"
+                                  title="عرض فواتير هذا الشهر"
+                                >
+                                  {month.ordersCount} فاتورة ↗
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveTab('reports');
+                                    setReportsSubTab('monthly');
+                                    setSelectedReportMonth(month.month);
+                                  }}
+                                  className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500 hover:text-black font-semibold text-[10px] transition-all cursor-pointer"
+                                  title="عرض التقرير الشهري المفصل"
+                                >
+                                  التقرير ↗
+                                </button>
+                              </div>
                             </div>
-                          </button>
-                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد مبيعات مسجلة.</p>}
+                            <div className="mt-2 grid grid-cols-3 gap-1 pt-1.5 border-t border-white/5 text-[11px] text-center">
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">مبيعات الشهر</span>
+                                <span className="font-bold text-purple-400 font-mono">EGP {month.totalSales.toFixed(1)}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">مصروفات الشهر</span>
+                                <span className="font-bold text-rose-400 font-mono">EGP {month.totalExpenses.toFixed(1)}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 block text-[9px]">صافي الشهر</span>
+                                <span className={`font-bold font-mono ${month.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  EGP {month.netProfit.toFixed(1)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )) : <p className="py-6 text-center text-xs text-gray-500">لا توجد سجلات مسجلة.</p>}
                       </div>
                     </div>
 
@@ -1485,219 +1743,1840 @@ export default function AdminPage() {
           )}
 
           {/* TAB 4: EXPENSES & CASH PAYOUTS LOG */}
-          {activeTab === 'expenses' && (
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 flex-row-reverse">
-                <div className="text-right">
-                  <h2 className="text-xl font-bold text-white">سجل المصروفات والمسحوبات النقدية</h2>
-                  <p className="text-xs text-gray-400 mt-1">متابعة كافة المبالغ المسحوبة من الدرج أثناء الورديات وفواتير توريد الخامات والمواد.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={fetchAnalytics}
-                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? 'animate-spin text-cyan-400' : ''}`} />
-                    <span>تحديث البيانات</span>
-                  </button>
-                </div>
-              </div>
+          {activeTab === 'expenses' && (() => {
+            const effectiveDay = selectedExpenseDate || (dailyExpenses[0]?.period || '');
+            const effectiveMonth = selectedExpenseMonth || (monthlyExpensesHistory[0]?.period || '');
 
-              {/* KPI Summary Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="glass-panel rounded-2xl p-4 text-right">
-                  <span className="text-[11px] text-gray-400 font-semibold block">إجمالي مصروفات اليوم</span>
-                  <p className="text-2xl font-black text-rose-400 mt-1">EGP {kpis.todayExpenses.toFixed(2)}</p>
-                  <span className="text-[9px] text-gray-500 mt-1 block">توريدات اليوم + مسحوبات الدرج</span>
-                </div>
-                <div className="glass-panel rounded-2xl p-4 text-right">
-                  <span className="text-[11px] text-gray-400 font-semibold block">إجمالي مصروفات الشهر</span>
-                  <p className="text-2xl font-black text-rose-400 mt-1">EGP {kpis.monthlyExpenses.toFixed(2)}</p>
-                  <span className="text-[9px] text-gray-500 mt-1 block">المصروفات التراكمية للشهر</span>
-                </div>
-                <div className="glass-panel rounded-2xl p-4 text-right">
-                  <span className="text-[11px] text-gray-400 font-semibold block">إجمالي مسحوبات الكاشير</span>
-                  <p className="text-2xl font-black text-amber-400 mt-1">
-                    EGP {cashTransactions.reduce((sum, tx) => sum + tx.amount, 0).toFixed(2)}
-                  </p>
-                  <span className="text-[9px] text-gray-500 mt-1 block">{cashTransactions.length} عملية سحب مسجلة</span>
-                </div>
-                <div className="glass-panel rounded-2xl p-4 text-right">
-                  <span className="text-[11px] text-gray-400 font-semibold block">إجمالي فواتير المخزن</span>
-                  <p className="text-2xl font-black text-cyan-400 mt-1">EGP {monthlyRestockTotal.toFixed(2)}</p>
-                  <span className="text-[9px] text-gray-500 mt-1 block">توريدات وشحن الخامات</span>
-                </div>
-              </div>
+            // 1. Day Data
+            const dayPayouts = cashTransactions.filter(
+              (t) => t.type === 'PAYOUT' && (t.createdAt?.slice(0, 10) === effectiveDay || t.operatingDate?.slice?.(0, 10) === effectiveDay)
+            );
+            const dayRestocks = restockLogs.filter((l) => l.createdAt?.slice(0, 10) === effectiveDay);
+            const dayPayoutsSum = dayPayouts.reduce((sum, t) => sum + t.amount, 0);
+            const dayRestocksSum = dayRestocks.reduce((sum, l) => sum + l.amount, 0);
+            const dayTotalExpenses = dayPayoutsSum + dayRestocksSum;
 
-              {/* Filter Tabs & Search Bar */}
-              <div className="glass-panel rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 flex-row-reverse">
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  {(['ALL', 'PAYOUTS', 'RESTOCKS'] as const).map((type) => (
+            const dayAllTransactions = [
+              ...dayPayouts.map((p) => ({
+                id: p.id,
+                kind: 'PAYOUT' as const,
+                title: p.reason,
+                actor: p.cashierName,
+                amount: p.amount,
+                createdAt: p.createdAt,
+              })),
+              ...dayRestocks.map((r) => ({
+                id: r.id,
+                kind: 'RESTOCK' as const,
+                title: `توريد ${r.rawMaterial?.name || 'خامة'} (${r.quantity} ${r.rawMaterial?.purchaseUnit || ''})`,
+                actor: 'المخزن',
+                amount: r.amount,
+                createdAt: r.createdAt,
+              })),
+            ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+            const filteredDayTxList = dayAllTransactions.filter((item) => {
+              if (expenseFilterType === 'PAYOUTS' && item.kind !== 'PAYOUT') return false;
+              if (expenseFilterType === 'RESTOCKS' && item.kind !== 'RESTOCK') return false;
+              if (expenseSearch) {
+                const s = expenseSearch.toLowerCase();
+                return item.title.toLowerCase().includes(s) || item.actor.toLowerCase().includes(s);
+              }
+              return true;
+            });
+
+            // 2. Month Data
+            const monthReport = monthlyExpensesHistory.find((m) => m.period === effectiveMonth) || {
+              period: effectiveMonth || '',
+              total: 0,
+              payoutsTotal: 0,
+              restocksTotal: 0,
+              count: 0,
+            };
+            const monthPayoutsSum = monthReport.payoutsTotal;
+            const monthRestocksSum = monthReport.restocksTotal;
+            const monthTotalExpenses = monthReport.total;
+
+            const monthAllTransactions = [
+              ...cashTransactions
+                .filter((t) => t.type === 'PAYOUT' && (t.createdAt?.startsWith(effectiveMonth) || t.operatingDate?.startsWith?.(effectiveMonth)))
+                .map((p) => ({
+                  id: p.id,
+                  kind: 'PAYOUT' as const,
+                  title: p.reason,
+                  actor: p.cashierName,
+                  amount: p.amount,
+                  createdAt: p.createdAt,
+                })),
+              ...restockLogs
+                .filter((l) => l.createdAt?.startsWith(effectiveMonth))
+                .map((r) => ({
+                  id: r.id,
+                  kind: 'RESTOCK' as const,
+                  title: `توريد ${r.rawMaterial?.name || 'خامة'} (${r.quantity} ${r.rawMaterial?.purchaseUnit || ''})`,
+                  actor: 'المخزن',
+                  amount: r.amount,
+                  createdAt: r.createdAt,
+                })),
+            ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+            const filteredMonthTxList = monthAllTransactions.filter((item) => {
+              if (expenseFilterType === 'PAYOUTS' && item.kind !== 'PAYOUT') return false;
+              if (expenseFilterType === 'RESTOCKS' && item.kind !== 'RESTOCK') return false;
+              if (expenseSearch) {
+                const s = expenseSearch.toLowerCase();
+                return item.title.toLowerCase().includes(s) || item.actor.toLowerCase().includes(s);
+              }
+              return true;
+            });
+
+            return (
+              <div className="space-y-4 sm:space-y-6">
+                {/* Header with Sub-tab Switcher: Daily vs Monthly */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 no-print text-right" dir="rtl">
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                      <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-amber-400 shrink-0" />
+                      <span>سجل وإدارة المصروفات</span>
+                    </h2>
+                    <p className="text-[11px] sm:text-xs text-gray-400 mt-1">
+                      خانة مخصصة لليوميات وأخرى للشهر بالكامل مع إمكانية فتح أي يوم أو شهر لمعرفة تفاصيل كل ما حدث فيه بدقة.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {/* Dedicated Sub-tab Pills (Full width grid on mobile) */}
+                    <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-white/10 w-full sm:w-auto gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setExpensesSubTab('daily')}
+                        className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                          expensesSubTab === 'daily'
+                            ? 'bg-cyan-500 text-black shadow-md font-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+                        <span className="hidden sm:inline">📅 يوميات المصروفات (حسب اليوم)</span>
+                        <span className="sm:hidden">📅 اليوميات</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setExpensesSubTab('monthly')}
+                        className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                          expensesSubTab === 'monthly'
+                            ? 'bg-purple-500 text-white shadow-md font-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <Calendar className="w-3.5 h-3.5 shrink-0" />
+                        <span className="hidden sm:inline">🗓️ مصروفات الشهور (حسب الشهر)</span>
+                        <span className="sm:hidden">🗓️ الشهور</span>
+                      </button>
+                    </div>
+
                     <button
-                      key={type}
-                      onClick={() => setExpenseFilterType(type)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                        expenseFilterType === type
-                          ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20'
-                          : 'bg-slate-900/60 text-gray-400 hover:text-white border border-white/5'
-                      }`}
+                      type="button"
+                      onClick={fetchAnalytics}
+                      className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl transition-all shrink-0"
+                      title="تحديث البيانات"
                     >
-                      {type === 'ALL' && 'الكل'}
-                      {type === 'PAYOUTS' && 'مسحوبات الدرج (الكاشير)'}
-                      {type === 'RESTOCKS' && 'مشتريات وتوريد الخامات'}
+                      <RefreshCw className={`w-4 h-4 ${loadingAnalytics ? 'animate-spin text-cyan-400' : ''}`} />
                     </button>
-                  ))}
+                  </div>
                 </div>
 
-                <div className="w-full md:w-72">
-                  <input
-                    type="text"
-                    value={expenseSearch}
-                    onChange={(e) => setExpenseSearch(e.target.value)}
-                    placeholder="بحث بالسبب أو الكاشير أو الخامة..."
-                    className="w-full bg-slate-900/80 border border-white/10 rounded-xl py-2 px-3.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
-                  />
-                </div>
+                {/* ======================================================== */}
+                {/* 1. KHANAT AL-YAWMIYAT (يوميات المصروفات حسب اليوم) */}
+                {/* ======================================================== */}
+                {expensesSubTab === 'daily' && (
+                  <div className="space-y-4 sm:space-y-6">
+                    {/* Day Selection Bar */}
+                    <div className="glass-panel rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-3 text-right no-print" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                        <div className="flex items-center justify-between sm:justify-start gap-2">
+                          <span className="text-xs font-bold text-gray-300 shrink-0">اختر أي يوم:</span>
+                          <div className="flex items-center gap-2 bg-slate-900/90 border border-cyan-500/40 px-3 py-1.5 rounded-xl">
+                            <CalendarDays className="w-4 h-4 text-cyan-400 shrink-0" />
+                            <input
+                              type="date"
+                              value={effectiveDay}
+                              onChange={(e) => setSelectedExpenseDate(e.target.value)}
+                              className="bg-transparent text-white text-xs font-mono font-bold focus:outline-none cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Quick Pills */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date().toISOString().slice(0, 10);
+                              setSelectedExpenseDate(today);
+                            }}
+                            className="py-1 px-3 rounded-lg text-xs font-bold bg-white/5 hover:bg-white/10 text-gray-300 border border-white/5 transition-all text-center"
+                          >
+                            اليوم
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const d = new Date();
+                              d.setDate(d.getDate() - 1);
+                              setSelectedExpenseDate(d.toISOString().slice(0, 10));
+                            }}
+                            className="py-1 px-3 rounded-lg text-xs font-bold bg-white/5 hover:bg-white/10 text-gray-300 border border-white/5 transition-all text-center"
+                          >
+                            أمس
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2">
+                        <span className="text-xs text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/20 px-3 py-1.5 rounded-xl text-center shrink-0">
+                          📅 {formatDateArabic(effectiveDay)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('reports');
+                            setReportsSubTab('daily');
+                            setSelectedReportDate(effectiveDay);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs transition-all flex items-center justify-center gap-1 shrink-0 whitespace-nowrap"
+                        >
+                          <span>التقرير المالي لهذا اليوم ↗</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Day Hero KPI Cards */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right relative overflow-hidden border-rose-500/30">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">إجمالي مصروفات اليوم</span>
+                        <p className="text-lg sm:text-2xl lg:text-3xl font-black text-rose-400 mt-1 font-mono truncate">
+                          EGP {dayTotalExpenses.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          مسحوبات + فواتير
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">مسحوبات درج الكاشير</span>
+                        <p className="text-lg sm:text-2xl font-black text-amber-400 mt-1 font-mono truncate">
+                          EGP {dayPayoutsSum.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          {dayPayouts.length} عمليات سحب نقدي
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">فواتير توريد الخامات</span>
+                        <p className="text-lg sm:text-2xl font-black text-cyan-400 mt-1 font-mono truncate">
+                          EGP {dayRestocksSum.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          {dayRestocks.length} فواتير توريد مخزن
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">عدد الحركات المنصرفة</span>
+                        <p className="text-lg sm:text-2xl font-black text-purple-300 mt-1 font-mono truncate">
+                          {dayAllTransactions.length} <span className="text-xs font-normal text-gray-400">حركة</span>
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          سجلات الصرف في هذا اليوم
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Day Detailed Statement */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 text-right" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                        <div>
+                          <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                            <Receipt className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" />
+                            <span>كشف حساب ما حدث في يوم: {formatDateArabic(effectiveDay)}</span>
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            قائمة تفصيلية بجميع المسحوبات ومشتريات الخامات المنصرفة في هذا اليوم بالاسم والوقت والمبلغ.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          {/* Filter pills */}
+                          <div className="grid grid-cols-3 sm:flex items-center p-1 rounded-xl bg-slate-900 border border-white/5">
+                            {(['ALL', 'PAYOUTS', 'RESTOCKS'] as const).map((type) => (
+                              <button
+                                key={type}
+                                type="button"
+                                onClick={() => setExpenseFilterType(type)}
+                                className={`py-1 px-2.5 rounded-lg text-xs font-bold transition-all text-center whitespace-nowrap ${
+                                  expenseFilterType === type
+                                    ? 'bg-amber-500 text-black'
+                                    : 'text-gray-400 hover:text-white'
+                                }`}
+                              >
+                                {type === 'ALL' && `الكل (${dayAllTransactions.length})`}
+                                {type === 'PAYOUTS' && `الدرج (${dayPayouts.length})`}
+                                {type === 'RESTOCKS' && `المخزن (${dayRestocks.length})`}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="w-full sm:w-48">
+                            <input
+                              type="text"
+                              value={expenseSearch}
+                              onChange={(e) => setExpenseSearch(e.target.value)}
+                              placeholder="بحث في البنود..."
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {filteredDayTxList.length ? (
+                        <>
+                          {/* Mobile Cards View (< sm) */}
+                          <div className="sm:hidden space-y-2.5">
+                            {filteredDayTxList.map((item) => (
+                              <div key={item.id} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-sm text-white">{item.title}</span>
+                                  <span className="font-bold font-mono text-rose-400 text-sm shrink-0">
+                                    EGP {item.amount.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-white/5">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    item.kind === 'PAYOUT'
+                                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                      : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                                  }`}>
+                                    {item.kind === 'PAYOUT' ? 'مسحوب نقدية من الدرج' : 'توريد خامة للمخزن'}
+                                  </span>
+                                  <span>بواسطة: {item.actor}</span>
+                                </div>
+                                <div className="text-[10px] text-gray-500 font-mono">
+                                  {new Date(item.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Desktop Table View (>= sm) */}
+                          <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5">
+                            <table className="w-full text-right text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400">
+                                  <th className="p-3.5">المبلغ</th>
+                                  <th className="p-3.5">البيان / السبب</th>
+                                  <th className="p-3.5">النوع</th>
+                                  <th className="p-3.5">المسؤول / الكاشير</th>
+                                  <th className="p-3.5">التوقيت</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredDayTxList.map((item) => (
+                                  <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
+                                    <td className="p-3.5 font-bold font-mono text-rose-400 text-sm">
+                                      EGP {item.amount.toFixed(2)}
+                                    </td>
+                                    <td className="p-3.5 font-semibold text-white">
+                                      {item.title}
+                                    </td>
+                                    <td className="p-3.5">
+                                      <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${
+                                        item.kind === 'PAYOUT'
+                                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                          : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                                      }`}>
+                                        {item.kind === 'PAYOUT' ? 'مسحوب نقدية من الدرج' : 'توريد وشحن خامة للمخزن'}
+                                      </span>
+                                    </td>
+                                    <td className="p-3.5 text-gray-300">
+                                      {item.actor}
+                                    </td>
+                                    <td className="p-3.5 font-mono text-gray-400 text-[11px]">
+                                      {new Date(item.createdAt).toLocaleTimeString('ar-EG', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="py-8 text-center text-xs text-gray-500">لا توجد مسحوبات أو مشتريات خامات مطابقة لهذا اليوم.</p>
+                      )}
+                    </div>
+
+                    {/* All Days Archive (يوميات الأيام السابقة) */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 text-right no-print" dir="rtl">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                        <span className="text-xs text-amber-400 font-bold bg-amber-500/10 px-2.5 py-1 rounded-lg">
+                          {dailyExpenses.length} يوم مسجل
+                        </span>
+                        <div>
+                          <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                            <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400 shrink-0" />
+                            <span>أرشيف مصروفات الأيام السابقة (يوم بيوم)</span>
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            اضغط على أي يوم لعرض تفاصيل كل ما تم صرفه وسحبه فيه.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Mobile Cards for Days Archive (< sm) */}
+                      <div className="sm:hidden space-y-2.5">
+                        {dailyExpenses.map((day) => {
+                          const isCur = effectiveDay === day.period;
+                          return (
+                            <div
+                              key={day.period}
+                              className={`p-3.5 rounded-xl border transition-all text-right space-y-2.5 ${
+                                isCur
+                                  ? 'bg-cyan-500/15 border-cyan-500/40 shadow-lg shadow-cyan-500/10'
+                                  : 'bg-slate-900/60 border-white/5'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-sm text-white">
+                                  {formatDateArabic(day.period)}
+                                </span>
+                                <span className="font-mono font-bold text-rose-400 text-sm">
+                                  EGP {day.total.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-[11px] text-gray-400">
+                                <span>درج: {day.payoutsTotal.toFixed(0)}</span>
+                                <span>مخزن: {day.restocksTotal.toFixed(0)}</span>
+                                <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300 font-mono font-bold text-[10px]">
+                                  {day.count} حركة
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedExpenseDate(day.period)}
+                                className={`w-full py-2 rounded-lg text-xs font-bold transition-all text-center ${
+                                  isCur
+                                    ? 'bg-cyan-500 text-black shadow-md'
+                                    : 'bg-white/5 hover:bg-cyan-500/20 text-cyan-300 border border-white/5'
+                                }`}
+                              >
+                                {isCur ? 'المعروض حالياً ✓' : 'عرض مصروفات هذا اليوم ↗'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Desktop Table for Days Archive (>= sm) */}
+                      <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5 max-h-96">
+                        <table className="w-full text-right text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                              <th className="p-3.5">تاريخ اليوم</th>
+                              <th className="p-3.5">إجمالي المصروفات</th>
+                              <th className="p-3.5">مسحوبات الدرج</th>
+                              <th className="p-3.5">توريدات المخزن</th>
+                              <th className="p-3.5">عدد الحركات</th>
+                              <th className="p-3.5">الإجراء</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dailyExpenses.map((day) => {
+                              const isCur = effectiveDay === day.period;
+                              return (
+                                <tr
+                                  key={day.period}
+                                  className={`border-b border-white/5 transition-colors ${
+                                    isCur ? 'bg-cyan-500/10 text-white font-semibold' : 'hover:bg-white/5 text-gray-300'
+                                  }`}
+                                >
+                                  <td className="p-3.5 font-bold">
+                                    {formatDateArabic(day.period)} <span className="text-gray-500 text-[10px] font-mono">({day.period})</span>
+                                  </td>
+                                  <td className="p-3.5 font-mono font-bold text-rose-400">
+                                    EGP {day.total.toFixed(2)}
+                                  </td>
+                                  <td className="p-3.5 font-mono text-amber-400">
+                                    EGP {day.payoutsTotal.toFixed(2)}
+                                  </td>
+                                  <td className="p-3.5 font-mono text-cyan-400">
+                                    EGP {day.restocksTotal.toFixed(2)}
+                                  </td>
+                                  <td className="p-3.5 font-mono">
+                                    <span className="px-2 py-0.5 rounded-full bg-white/5 text-gray-300 text-[11px]">
+                                      {day.count} حركة
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedExpenseDate(day.period)}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                                        isCur
+                                          ? 'bg-cyan-500 text-black shadow-md'
+                                          : 'bg-white/5 hover:bg-cyan-500/20 text-cyan-300 border border-white/5'
+                                      }`}
+                                    >
+                                      {isCur ? 'المعروض حالياً ✓' : 'عرض مصروفات اليوم ↗'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ======================================================== */}
+                {/* 2. KHANAT AL-SHAHR (مصروفات الشهور حسب الشهر) */}
+                {/* ======================================================== */}
+                {expensesSubTab === 'monthly' && (
+                  <div className="space-y-4 sm:space-y-6">
+                    {/* Month Selection Bar */}
+                    <div className="glass-panel rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-3 text-right no-print" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                        <div className="flex items-center justify-between sm:justify-start gap-2">
+                          <span className="text-xs font-bold text-white shrink-0">اختر الشهر:</span>
+                          <div className="flex items-center gap-2 bg-slate-900 border border-purple-500/40 px-3 py-1.5 rounded-xl">
+                            <Calendar className="w-4 h-4 text-purple-400 shrink-0" />
+                            <select
+                              value={effectiveMonth}
+                              onChange={(e) => setSelectedExpenseMonth(e.target.value)}
+                              className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer"
+                            >
+                              {monthlyExpensesHistory.map((m) => (
+                                <option key={m.period} value={m.period} className="bg-slate-900 text-white">
+                                  {formatMonthArabic(m.period)} ({m.period})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const thisMonth = new Date().toISOString().slice(0, 7);
+                            setSelectedExpenseMonth(thisMonth);
+                          }}
+                          className="py-1 px-3 rounded-lg text-xs font-bold bg-white/5 hover:bg-white/10 text-gray-300 border border-white/5 transition-all text-center w-full sm:w-auto"
+                        >
+                          الشهر الحالي
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-2">
+                        <span className="text-xs text-purple-400 font-bold bg-purple-500/10 border border-purple-500/20 px-3 py-1.5 rounded-xl text-center shrink-0">
+                          🗓️ {formatMonthArabic(effectiveMonth)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('reports');
+                            setReportsSubTab('monthly');
+                            setSelectedReportMonth(effectiveMonth);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-white font-bold text-xs transition-all flex items-center justify-center gap-1 shrink-0 whitespace-nowrap"
+                        >
+                          <span>التقرير المالي لهذا الشهر ↗</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Month Hero KPI Cards */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right border-purple-500/30">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">توتال مصروفات الشهر</span>
+                        <p className="text-lg sm:text-2xl lg:text-3xl font-black text-rose-400 mt-1 font-mono truncate">
+                          EGP {monthTotalExpenses.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          شهر {formatMonthArabic(effectiveMonth)}
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">مسحوبات الدرج</span>
+                        <p className="text-lg sm:text-2xl font-black text-amber-400 mt-1 font-mono truncate">
+                          EGP {monthPayoutsSum.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          مسحوبات الكاشير التراكمية
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">توريدات المخزن</span>
+                        <p className="text-lg sm:text-2xl font-black text-cyan-400 mt-1 font-mono truncate">
+                          EGP {monthRestocksSum.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          فواتير الخامات التراكمية
+                        </span>
+                      </div>
+
+                      <div className="glass-panel rounded-2xl p-3.5 sm:p-5 text-right">
+                        <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">عدد الحركات المنصرفة</span>
+                        <p className="text-lg sm:text-2xl font-black text-purple-300 mt-1 font-mono truncate">
+                          {monthReport.count || monthAllTransactions.length} <span className="text-xs font-normal text-gray-400">حركة</span>
+                        </p>
+                        <span className="text-[9px] sm:text-[10px] text-gray-500 mt-1 block truncate">
+                          إجمالي حركات الشهر
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Month Detailed Statement */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 text-right" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                        <div>
+                          <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                            <Receipt className="w-4 h-4 sm:w-5 sm:h-5 text-purple-400 shrink-0" />
+                            <span>كشف حساب ما حدث في شهر: {formatMonthArabic(effectiveMonth)}</span>
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            قائمة بجميع المسحوبات ومشتريات الخامات المنصرفة طوال هذا الشهر بالكامل.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <div className="grid grid-cols-3 sm:flex items-center p-1 rounded-xl bg-slate-900 border border-white/5">
+                            {(['ALL', 'PAYOUTS', 'RESTOCKS'] as const).map((type) => (
+                              <button
+                                key={type}
+                                type="button"
+                                onClick={() => setExpenseFilterType(type)}
+                                className={`py-1 px-2.5 rounded-lg text-xs font-bold transition-all text-center whitespace-nowrap ${
+                                  expenseFilterType === type
+                                    ? 'bg-purple-500 text-white'
+                                    : 'text-gray-400 hover:text-white'
+                                }`}
+                              >
+                                {type === 'ALL' && `الكل (${monthAllTransactions.length})`}
+                                {type === 'PAYOUTS' && 'الدرج'}
+                                {type === 'RESTOCKS' && 'المخزن'}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="w-full sm:w-48">
+                            <input
+                              type="text"
+                              value={expenseSearch}
+                              onChange={(e) => setExpenseSearch(e.target.value)}
+                              placeholder="بحث في بنود الشهر..."
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-right"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {filteredMonthTxList.length ? (
+                        <>
+                          {/* Mobile Cards for Month Tx (< sm) */}
+                          <div className="sm:hidden space-y-2.5">
+                            {filteredMonthTxList.map((item) => (
+                              <div key={item.id} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-sm text-white">{item.title}</span>
+                                  <span className="font-bold font-mono text-rose-400 text-sm shrink-0">
+                                    EGP {item.amount.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1 border-t border-white/5">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    item.kind === 'PAYOUT'
+                                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                      : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                                  }`}>
+                                    {item.kind === 'PAYOUT' ? 'مسحوب نقدية من الدرج' : 'توريد خامة للمخزن'}
+                                  </span>
+                                  <span>بواسطة: {item.actor}</span>
+                                </div>
+                                <div className="text-[10px] text-gray-500 font-mono">
+                                  {new Date(item.createdAt).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Desktop Table for Month Tx (>= sm) */}
+                          <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5">
+                            <table className="w-full text-right text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400">
+                                  <th className="p-3.5">المبلغ</th>
+                                  <th className="p-3.5">البيان / السبب</th>
+                                  <th className="p-3.5">النوع</th>
+                                  <th className="p-3.5">المسؤول / الكاشير</th>
+                                  <th className="p-3.5">التاريخ والوقت</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredMonthTxList.map((item) => (
+                                  <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
+                                    <td className="p-3.5 font-bold font-mono text-rose-400 text-sm">
+                                      EGP {item.amount.toFixed(2)}
+                                    </td>
+                                    <td className="p-3.5 font-semibold text-white">
+                                      {item.title}
+                                    </td>
+                                    <td className="p-3.5">
+                                      <span className={`px-2.5 py-1 rounded text-[10px] font-bold ${
+                                        item.kind === 'PAYOUT'
+                                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                          : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                                      }`}>
+                                        {item.kind === 'PAYOUT' ? 'مسحوب نقدية من الدرج' : 'توريد وشحن خامة للمخزن'}
+                                      </span>
+                                    </td>
+                                    <td className="p-3.5 text-gray-300">
+                                      {item.actor}
+                                    </td>
+                                    <td className="p-3.5 font-mono text-gray-400 text-[11px]">
+                                      {new Date(item.createdAt).toLocaleString('ar-EG', {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="py-8 text-center text-xs text-gray-500">لا توجد حركات مسجلة لهذا الشهر.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
+            );
+          })()}
 
-              {/* 1. Cash Payouts Table */}
-              {(expenseFilterType === 'ALL' || expenseFilterType === 'PAYOUTS') && (
-                <div className="glass-panel rounded-2xl overflow-hidden text-right" dir="rtl">
-                  <div className="p-4 border-b border-white/5 flex items-center justify-between flex-row-reverse">
-                    <span className="text-xs text-gray-400 font-mono">
-                      {cashTransactions.filter((tx) => !expenseSearch || tx.reason.includes(expenseSearch) || tx.cashierName.includes(expenseSearch)).length} عمليات
-                    </span>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-amber-400" />
-                      <span>مسحوبات نقدية من درج الكاشير أثناء الورديات</span>
-                    </h3>
+          {/* TAB: COMPREHENSIVE DAILY & MONTHLY REPORTS */}
+          {activeTab === 'reports' && (() => {
+            const effectiveReportDay = selectedReportDate || (dailyReports[0]?.date || '');
+            const effectiveReportMonth = selectedReportMonth || (monthlyReports[0]?.month || '');
+
+            const activeDayReport = dailyReports.find((r) => r.date === effectiveReportDay) || {
+              date: effectiveReportDay || '',
+              ordersCount: 0,
+              totalSales: 0,
+              cashSales: 0,
+              instaPaySales: 0,
+              totalExpenses: 0,
+              payoutsTotal: 0,
+              restocksTotal: 0,
+              expensesCount: 0,
+              netProfit: 0,
+              itemsSold: [],
+            };
+
+            const dayExpensesList = [
+              ...cashTransactions
+                .filter((t) => t.type === 'PAYOUT' && (t.createdAt?.slice(0, 10) === effectiveReportDay || t.operatingDate?.slice?.(0, 10) === effectiveReportDay))
+                .map((t) => ({
+                  id: t.id,
+                  type: 'مسحوبات درج (كاشير)',
+                  title: t.reason,
+                  amount: t.amount,
+                  actor: t.cashierName,
+                  createdAt: t.createdAt,
+                })),
+              ...restockLogs
+                .filter((l) => l.createdAt?.slice(0, 10) === effectiveReportDay)
+                .map((l) => ({
+                  id: l.id,
+                  type: 'توريد وشحن خامات',
+                  title: `توريد ${l.rawMaterial?.name || 'خامة'} (${l.quantity} ${l.rawMaterial?.purchaseUnit || ''})`,
+                  amount: l.amount,
+                  actor: 'المخزن',
+                  createdAt: l.createdAt,
+                })),
+            ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+            // Items sold for this day
+            const dayItemsSold = (activeDayReport.itemsSold || []).filter((item) => {
+              if (!dailyReportItemSearch) return true;
+              return item.name.toLowerCase().includes(dailyReportItemSearch.toLowerCase());
+            });
+
+            const dayTotalItemsQty = (activeDayReport.itemsSold || []).reduce((sum, item) => sum + item.qty, 0);
+
+            // Filtered day sales orders
+            const filteredDayOrders = selectedDayReportOrders.filter((order) => {
+              if (!dayReportSearch) return true;
+              const s = dayReportSearch.toLowerCase();
+              const matchReceipt = order.receiptNumber?.toLowerCase().includes(s);
+              const matchTable = order.table?.name?.toLowerCase().includes(s);
+              const matchItems = order.items?.some((i: any) => i.item?.name?.toLowerCase().includes(s));
+              return matchReceipt || matchTable || matchItems;
+            });
+
+            // Month specific report data
+            const activeMonthReport = monthlyReports.find((m) => m.month === effectiveReportMonth) || {
+              month: effectiveReportMonth || '',
+              ordersCount: 0,
+              totalSales: 0,
+              cashSales: 0,
+              instaPaySales: 0,
+              totalExpenses: 0,
+              payoutsTotal: 0,
+              restocksTotal: 0,
+              expensesCount: 0,
+              netProfit: 0,
+              itemsSold: [],
+            };
+
+            const monthDaysList = dailyReports.filter((r) => r.date.startsWith(effectiveReportMonth));
+
+            // Month items sold
+            const monthItemsSold = (activeMonthReport.itemsSold || []).filter((item) => {
+              if (!monthlyReportItemSearch) return true;
+              return item.name.toLowerCase().includes(monthlyReportItemSearch.toLowerCase());
+            });
+
+            const monthTotalItemsQty = (activeMonthReport.itemsSold || []).reduce((sum, item) => sum + item.qty, 0);
+
+            return (
+              <div className="space-y-4 sm:space-y-6">
+                {/* Header with Sub-tab Switcher & Print */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 no-print text-right" dir="rtl">
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
+                      <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-cyan-400 shrink-0" />
+                      <span>التقرير المالي الشامل</span>
+                    </h2>
+                    <p className="text-[11px] sm:text-xs text-gray-400 mt-1">
+                      توتال مبيعات اليوم وتوتال الأصناف بالكميات (مثل: 10 مياه و50 كنز)، وتوتال الشهر مع استعراض أي يوم.
+                    </p>
                   </div>
 
-                  <div className="overflow-x-auto max-h-[450px]">
-                    <table className="w-full text-right text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
-                          <th className="p-3.5">المبلغ</th>
-                          <th className="p-3.5">سبب الصرف / البند</th>
-                          <th className="p-3.5">الكاشير المسجل</th>
-                          <th className="p-3.5">التاريخ والوقت</th>
-                          <th className="p-3.5">نوع القيد</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cashTransactions
-                          .filter((tx) => !expenseSearch || tx.reason.includes(expenseSearch) || tx.cashierName.includes(expenseSearch))
-                          .length ? (
-                          cashTransactions
-                            .filter((tx) => !expenseSearch || tx.reason.includes(expenseSearch) || tx.cashierName.includes(expenseSearch))
-                            .map((tx) => (
-                              <tr key={tx.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
-                                <td className="p-3.5 font-bold font-mono text-rose-400 text-sm">
-                                  EGP {tx.amount.toFixed(2)}
-                                </td>
-                                <td className="p-3.5 font-semibold text-white">
-                                  {tx.reason}
-                                </td>
-                                <td className="p-3.5">
-                                  <span className="px-2 py-0.5 rounded-md bg-white/5 text-gray-300 text-[11px] font-medium border border-white/5">
-                                    {tx.cashierName}
-                                  </span>
-                                </td>
-                                <td className="p-3.5 font-mono text-gray-400 text-[11px]">
-                                  {new Date(tx.createdAt).toLocaleString('ar-EG', {
-                                    year: 'numeric',
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </td>
-                                <td className="p-3.5">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                                    {tx.type === 'PAYOUT' ? 'سحب نقدي (مصروف)' : 'إيداع نقدي'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                        ) : (
-                          <tr>
-                            <td colSpan={5} className="p-8 text-center text-gray-500 text-xs">
-                              لا توجد مسحوبات نقدية مسجلة مطابقة للبحث.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {/* Sub-tab pills (Full width grid on mobile) */}
+                    <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-white/10 w-full sm:w-auto gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setReportsSubTab('daily')}
+                        className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                          reportsSubTab === 'daily'
+                            ? 'bg-cyan-500 text-black shadow-md font-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+                        <span>التقرير اليومي</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setReportsSubTab('monthly')}
+                        className={`py-2 px-3 sm:px-4 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                          reportsSubTab === 'monthly'
+                            ? 'bg-purple-500 text-white shadow-md font-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <TrendingUp className="w-3.5 h-3.5 shrink-0" />
+                        <span>التقرير الشهري</span>
+                      </button>
+                    </div>
+
+                    {/* Print icon button (icon-only, no word طباعة) */}
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl transition-all shrink-0"
+                      title="طباعة التقرير"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              )}
 
-              {/* 2. Restock Logs Table */}
-              {(expenseFilterType === 'ALL' || expenseFilterType === 'RESTOCKS') && (
-                <div className="glass-panel rounded-2xl overflow-hidden text-right" dir="rtl">
-                  <div className="p-4 border-b border-white/5 flex items-center justify-between flex-row-reverse">
-                    <span className="text-xs text-gray-400 font-mono">
-                      {restockLogs.filter((log) => !expenseSearch || log.rawMaterial.name.includes(expenseSearch)).length} فواتير
-                    </span>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Package className="w-4 h-4 text-cyan-400" />
-                      <span>فواتير توريد وشحن الخامات للمخزن</span>
-                    </h3>
+                {/* ======================================================== */}
+                {/* 1. DAILY REPORT VIEW (التقرير اليومي الشامل) */}
+                {/* ======================================================== */}
+                {reportsSubTab === 'daily' && (
+                  <div className="space-y-4 sm:space-y-6">
+                    {/* Day Picker Toolbar */}
+                    <div className="glass-panel rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-3 text-right no-print" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
+                        {/* Day input */}
+                        <div className="flex items-center justify-between sm:justify-start gap-2">
+                          <span className="text-xs font-bold text-gray-300 shrink-0">اختر اليوم:</span>
+                          <div className="flex items-center gap-2 bg-slate-900/90 border border-cyan-500/40 px-3 py-1.5 rounded-xl">
+                            <CalendarDays className="w-4 h-4 text-cyan-400 shrink-0" />
+                            <input
+                              type="date"
+                              value={effectiveReportDay}
+                              onChange={(e) => setSelectedReportDate(e.target.value)}
+                              className="bg-transparent text-white text-xs font-mono font-bold focus:outline-none cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Quick pills for recent days */}
+                        <div className="flex items-center gap-1.5 overflow-x-auto py-1 no-scrollbar w-full sm:w-auto">
+                          <span className="text-[11px] text-gray-500 shrink-0 hidden sm:inline">أيام سريعة:</span>
+                          {dailyReports.slice(0, 6).map((day) => (
+                            <button
+                              key={day.date}
+                              type="button"
+                              onClick={() => setSelectedReportDate(day.date)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all ${
+                                effectiveReportDay === day.date
+                                  ? 'bg-cyan-500 text-black font-bold shadow-md'
+                                  : 'bg-white/5 hover:bg-white/10 text-gray-300 border border-white/5'
+                              }`}
+                            >
+                              {day.date.slice(8, 10)}/{day.date.slice(5, 7)} ({day.ordersCount})
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Day Label Badge */}
+                      <div className="flex items-center justify-end">
+                        <span className="text-xs text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/20 px-3 py-1.5 rounded-xl text-center w-full sm:w-auto shrink-0 whitespace-nowrap">
+                          📅 {formatDateArabic(effectiveReportDay)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Prominent Day KPI Banner */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-6 relative overflow-hidden text-right border-cyan-500/30" dir="rtl">
+                      <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-cyan-500/10 to-purple-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+                      <div className="flex items-start justify-between gap-2 sm:gap-4 border-b border-white/10 pb-3 sm:pb-4">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-base sm:text-xl font-black text-white">
+                              التقرير المالي ليوم: {formatDateArabic(effectiveReportDay) || effectiveReportDay}
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono text-[11px] font-bold border border-cyan-500/30 shrink-0">
+                              {effectiveReportDay}
+                            </span>
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-1">
+                            كشف حساب المبيعات، المصروفات، صافي الأرباح، والأصناف المباعة خلال هذا اليوم.
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`px-3 py-1.5 rounded-xl text-xs font-black border shrink-0 whitespace-nowrap shadow-sm ${
+                            activeDayReport.netProfit >= 0
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          }`}>
+                            {activeDayReport.netProfit >= 0 ? 'يوم رابح ✓' : 'يوم عجز ✕'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 6 Core Metric Badges for the Day */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3.5 mt-4 sm:mt-5">
+                        {/* 1. عدد الفواتير */}
+                        <div className="rounded-xl bg-slate-900/80 border border-cyan-500/30 p-3 sm:p-3.5 text-right relative overflow-hidden">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">عدد فواتير اليوم</span>
+                          <p className="text-lg sm:text-2xl font-black text-cyan-400 mt-1 font-mono truncate">
+                            {activeDayReport.ordersCount} <span className="text-xs font-normal text-cyan-300">فاتورة</span>
+                          </p>
+                          <span className="text-[9px] text-cyan-500/80 mt-1 block truncate">الطلبات المكتملة</span>
+                        </div>
+
+                        {/* 2. إجمالي المبيعات */}
+                        <div className="rounded-xl bg-slate-900/80 border border-white/10 p-3 sm:p-3.5 text-right">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">إجمالي المبيعات</span>
+                          <p className="text-lg sm:text-2xl font-black text-white mt-1 font-mono truncate">
+                            EGP {activeDayReport.totalSales.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] text-gray-400 mt-1 block truncate">
+                            كاش: {activeDayReport.cashSales.toFixed(0)} | إنستا: {activeDayReport.instaPaySales.toFixed(0)}
+                          </span>
+                        </div>
+
+                        {/* 3. إجمالي المصروفات */}
+                        <div className="rounded-xl bg-slate-900/80 border border-white/10 p-3 sm:p-3.5 text-right">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">إجمالي المصروفات</span>
+                          <p className="text-lg sm:text-2xl font-black text-rose-400 mt-1 font-mono truncate">
+                            EGP {activeDayReport.totalExpenses.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] text-gray-400 mt-1 block truncate">
+                            درج: {activeDayReport.payoutsTotal.toFixed(0)} | مخزن: {activeDayReport.restocksTotal.toFixed(0)}
+                          </span>
+                        </div>
+
+                        {/* 4. صافي ربح اليوم */}
+                        <div className="rounded-xl bg-slate-900/80 border border-emerald-500/30 p-3 sm:p-3.5 text-right">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">صافي الربح</span>
+                          <p className={`text-lg sm:text-2xl font-black mt-1 font-mono truncate ${activeDayReport.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            EGP {activeDayReport.netProfit.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] text-gray-400 mt-1 block truncate">المبيعات − المصروفات</span>
+                        </div>
+
+                        {/* 5. متوسط الفاتورة */}
+                        <div className="rounded-xl bg-slate-900/80 border border-white/10 p-3 sm:p-3.5 text-right">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">متوسط الفاتورة</span>
+                          <p className="text-base sm:text-xl font-bold text-purple-300 mt-1 font-mono truncate">
+                            EGP {(activeDayReport.ordersCount > 0 ? activeDayReport.totalSales / activeDayReport.ordersCount : 0).toFixed(1)}
+                          </p>
+                          <span className="text-[9px] text-gray-500 mt-1 block truncate">معدل الصرف للطلب</span>
+                        </div>
+
+                        {/* 6. نسبة الربحية */}
+                        <div className="rounded-xl bg-slate-900/80 border border-white/10 p-3 sm:p-3.5 text-right">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block font-semibold">هامش الربح</span>
+                          <p className="text-base sm:text-xl font-bold text-amber-400 mt-1 font-mono truncate">
+                            {activeDayReport.totalSales > 0 ? ((activeDayReport.netProfit / activeDayReport.totalSales) * 100).toFixed(1) : 0}%
+                          </p>
+                          <span className="text-[9px] text-gray-500 mt-1 block truncate">نسبة الصافي للمبيعات</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ======================================================== */}
+                    {/* KEY FEATURE: ITEMS SOLD TODAY (توتال مبيعات الأصناف والكميات لليوم) */}
+                    {/* ======================================================== */}
+                    <div className="glass-panel rounded-2xl p-3.5 sm:p-6 text-right space-y-4 border-cyan-500/20" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <ShoppingCart className="w-5 h-5 text-cyan-400 shrink-0" />
+                            <h3 className="text-sm sm:text-base font-bold text-white">
+                              توتال مبيعات الأصناف والكميات لليوم (مثلاً: 10 مياه، 50 كنز...)
+                            </h3>
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            تجميع كميات وتوتال كل صنف تم بيعه خلال هذا اليوم بالكامل لتتبع حركة المبيعات صنفاً بصنف.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                          <span className="text-xs bg-cyan-500/10 text-cyan-300 font-bold px-3 py-1.5 rounded-xl border border-cyan-500/20 text-center shrink-0">
+                            {activeDayReport.itemsSold?.length || 0} صنف · {dayTotalItemsQty} قطعة مباعة
+                          </span>
+
+                          <div className="w-full sm:w-48">
+                            <input
+                              type="text"
+                              value={dailyReportItemSearch}
+                              onChange={(e) => setDailyReportItemSearch(e.target.value)}
+                              placeholder="بحث باسم الصنف..."
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {dayItemsSold.length ? (
+                        <>
+                          {/* Mobile Cards for Items Sold (< sm) */}
+                          <div className="sm:hidden space-y-2.5">
+                            {dayItemsSold.map((it) => {
+                              const pct = activeDayReport.totalSales > 0 ? (it.total / activeDayReport.totalSales) * 100 : 0;
+                              return (
+                                <div key={it.itemId} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-sm text-white">{it.name}</span>
+                                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 font-black font-mono text-xs border border-cyan-500/30 shrink-0">
+                                      {it.qty} قطعة
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-xs font-mono text-gray-300">
+                                    <span>سعر الوحدة: EGP {it.unitPrice.toFixed(2)}</span>
+                                    <span className="font-bold text-amber-400 text-sm">
+                                      الإجمالي: EGP {it.total.toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 pt-1">
+                                    <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full"
+                                        style={{ width: `${Math.min(pct, 100)}%` }}
+                                      ></div>
+                                    </div>
+                                    <span className="font-mono text-[10px] text-gray-400 shrink-0">
+                                      {pct.toFixed(1)}% من مبيعات اليوم
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Desktop Table (>= sm) */}
+                          <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5">
+                            <table className="w-full text-right text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                                  <th className="p-3.5">اسم الصنف</th>
+                                  <th className="p-3.5">الكمية المباعة اليوم</th>
+                                  <th className="p-3.5">سعر الوحدة</th>
+                                  <th className="p-3.5">إجمالي المبيعات</th>
+                                  <th className="p-3.5">النسبة من مبيعات اليوم</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {dayItemsSold.map((it) => {
+                                  const pct = activeDayReport.totalSales > 0 ? (it.total / activeDayReport.totalSales) * 100 : 0;
+                                  return (
+                                    <tr key={it.itemId} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
+                                      <td className="p-3.5 font-bold text-white text-sm">
+                                        {it.name}
+                                      </td>
+                                      <td className="p-3.5">
+                                        <span className="px-3 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 font-black font-mono text-sm border border-cyan-500/20">
+                                          {it.qty} <span className="text-[10px] font-normal">قطعة / علبة</span>
+                                        </span>
+                                      </td>
+                                      <td className="p-3.5 font-mono text-gray-300">
+                                        EGP {it.unitPrice.toFixed(2)}
+                                      </td>
+                                      <td className="p-3.5 font-mono font-black text-amber-400 text-sm">
+                                        EGP {it.total.toFixed(2)}
+                                      </td>
+                                      <td className="p-3.5 min-w-[150px]">
+                                        <div className="flex items-center gap-2">
+                                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                            <div
+                                              className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full"
+                                              style={{ width: `${Math.min(pct, 100)}%` }}
+                                            ></div>
+                                          </div>
+                                          <span className="font-mono text-[11px] text-gray-400 w-10 text-left">
+                                            {pct.toFixed(1)}%
+                                          </span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="py-8 text-center text-xs text-gray-500 bg-slate-900/30 rounded-xl">
+                          لا توجد أصناف مباعة مسجلة في هذا اليوم.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Expenses for this Day */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 text-right space-y-4" dir="rtl">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                        <div>
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-rose-400 shrink-0" />
+                            <span>مصروفات ومسحوبات هذا اليوم ({dayExpensesList.length} بنود)</span>
+                          </h4>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            المسحوبات النقدية من الدرج وفواتير شراء الخامات المنصرفة في هذا اليوم.
+                          </p>
+                        </div>
+                        <span className="text-xs font-mono font-bold text-rose-400 bg-rose-500/10 px-2.5 py-1 rounded-lg shrink-0">
+                          EGP {activeDayReport.totalExpenses.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {dayExpensesList.length ? (
+                        <>
+                          {/* Mobile Cards for Day Expenses (< sm) */}
+                          <div className="sm:hidden space-y-2.5">
+                            {dayExpensesList.map((exp) => (
+                              <div key={exp.id} className="p-3 rounded-xl bg-slate-900/80 border border-white/5 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-sm text-white">{exp.title}</span>
+                                  <span className="font-mono font-bold text-rose-400 text-sm">
+                                    EGP {exp.amount.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-[10px] text-gray-400 pt-1 border-t border-white/5">
+                                  <span>{exp.type}</span>
+                                  <span>{exp.actor}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Desktop Table (>= sm) */}
+                          <div className="hidden sm:block overflow-x-auto max-h-64 rounded-xl border border-white/5">
+                            <table className="w-full text-right text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-900/70 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                                  <th className="p-3">المبلغ</th>
+                                  <th className="p-3">البيان</th>
+                                  <th className="p-3">النوع</th>
+                                  <th className="p-3">المسؤول</th>
+                                  <th className="p-3">الوقت</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {dayExpensesList.map((exp) => (
+                                  <tr key={exp.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                    <td className="p-3 font-mono font-bold text-rose-400">
+                                      EGP {exp.amount.toFixed(2)}
+                                    </td>
+                                    <td className="p-3 font-medium text-white">{exp.title}</td>
+                                    <td className="p-3 text-gray-400">{exp.type}</td>
+                                    <td className="p-3 text-gray-300">{exp.actor}</td>
+                                    <td className="p-3 font-mono text-gray-500 text-[11px]">
+                                      {new Date(exp.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="py-6 text-center text-xs text-gray-500 bg-slate-900/30 rounded-xl">لا توجد مصروفات أو مسحوبات مسجلة في هذا اليوم.</p>
+                      )}
+                    </div>
+
+                    {/* Sales Orders List for this Day */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 text-right" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Receipt className="w-4 h-4 text-cyan-400 shrink-0" />
+                            <h4 className="text-sm font-bold text-white">
+                              فواتير مبيعات اليوم ({filteredDayOrders.length} فاتورة)
+                            </h4>
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            استعراض كل فاتورة بيع تمت خلال هذا اليوم بالتفصيل.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowDayIndividualOrders(!showDayIndividualOrders)}
+                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 border border-white/5 transition-all text-center whitespace-nowrap"
+                          >
+                            {showDayIndividualOrders ? 'إخفاء الفواتير ▲' : 'إظهار الفواتير ▼'}
+                          </button>
+
+                          {showDayIndividualOrders && (
+                            <div className="w-full sm:w-48">
+                              <input
+                                type="text"
+                                value={dayReportSearch}
+                                onChange={(e) => setDayReportSearch(e.target.value)}
+                                placeholder="بحث برقم الفاتورة أو الصنف..."
+                                className="w-full bg-slate-900 border border-white/10 rounded-xl py-1 px-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 text-right"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {showDayIndividualOrders && (
+                        <div className="space-y-3">
+                          {loadingDayReportOrders ? (
+                            <div className="py-8 flex items-center justify-center gap-2 text-xs text-gray-400">
+                              <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                              <span>جاري تحميل الفواتير...</span>
+                            </div>
+                          ) : filteredDayOrders.length ? (
+                            <>
+                              {/* Mobile Cards for Orders (< sm) */}
+                              <div className="sm:hidden space-y-2.5">
+                                {filteredDayOrders.map((ord) => (
+                                  <div key={ord.id} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-mono font-bold text-cyan-400 text-xs">
+                                        {ord.receiptNumber || ord.id.slice(0, 8)}
+                                      </span>
+                                      <span className="font-mono font-bold text-white text-sm">
+                                        EGP {ord.total.toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-gray-300 truncate">
+                                      {ord.items?.map((i: any) => `${i.item?.name} (${i.qty})`).join('، ')}
+                                    </p>
+                                    <div className="flex justify-between items-center text-[10px] text-gray-400 pt-1 border-t border-white/5">
+                                      <span className={`px-2 py-0.5 rounded font-bold ${ord.paymentMethod === 'CASH' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                        {ord.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => openOrderDetails(ord.id)}
+                                        className="px-2.5 py-1 rounded bg-cyan-500/15 text-cyan-300 font-bold"
+                                      >
+                                        تفاصيل الفاتورة ↗
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Desktop Table (>= sm) */}
+                              <div className="hidden sm:block overflow-x-auto max-h-80 rounded-xl border border-white/5">
+                                <table className="w-full text-right text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-900/70 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                                      <th className="p-3">رقم الفاتورة</th>
+                                      <th className="p-3">الوقت</th>
+                                      <th className="p-3">نوع الطلب</th>
+                                      <th className="p-3">الدفع</th>
+                                      <th className="p-3">الأصناف</th>
+                                      <th className="p-3">الإجمالي</th>
+                                      <th className="p-3">تفاصيل</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {filteredDayOrders.map((ord) => (
+                                      <tr key={ord.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                        <td className="p-3 font-mono font-bold text-cyan-400">
+                                          {ord.receiptNumber || ord.id.slice(0, 8)}
+                                        </td>
+                                        <td className="p-3 font-mono text-gray-400 text-[11px]">
+                                          {new Date(ord.createdAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                        </td>
+                                        <td className="p-3">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${ord.orderType === 'DINE_IN' ? 'bg-cyan-500/10 text-cyan-300' : 'bg-purple-500/10 text-purple-300'}`}>
+                                            {ord.orderType === 'DINE_IN' ? `صالة (${ord.table?.name || 'طاولة'})` : 'تيك أواي'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${ord.paymentMethod === 'CASH' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                            {ord.paymentMethod === 'CASH' ? 'كاش' : 'إنستا باي'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-gray-300 max-w-xs truncate">
+                                          {ord.items?.map((i: any) => `${i.item?.name} (${i.qty})`).join('، ')}
+                                        </td>
+                                        <td className="p-3 font-mono font-bold text-white">
+                                          EGP {ord.total.toFixed(2)}
+                                        </td>
+                                        <td className="p-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => openOrderDetails(ord.id)}
+                                            className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500 text-cyan-300 hover:text-black font-semibold text-[10px] transition-all cursor-pointer"
+                                          >
+                                            عرض ↗
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="py-6 text-center text-xs text-gray-500 bg-slate-900/30 rounded-xl">لا توجد فواتير مبيعات مسجلة في هذا اليوم.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Archive of All Recorded Days */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 text-right no-print" dir="rtl">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                        <div>
+                          <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                            <CalendarDays className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-400 shrink-0" />
+                            <span>أرشيف جميع الأيام السابقة (المبيعات والمصروفات والأرباح)</span>
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
+                            جدول مقارنة لجميع الأيام السابقة؛ اضغط على أي يوم لفتح تقريره اليومي الكامل.
+                          </p>
+                        </div>
+                        <span className="text-xs text-cyan-400 font-bold bg-cyan-500/10 px-2.5 py-1 rounded-lg shrink-0">
+                          {dailyReports.length} يوم مسجل
+                        </span>
+                      </div>
+
+                      {/* Mobile Cards for Daily Archive (< sm) */}
+                      <div className="sm:hidden space-y-2.5">
+                        {dailyReports.map((day) => {
+                          const isCur = effectiveReportDay === day.date;
+                          return (
+                            <div
+                              key={day.date}
+                              className={`p-3.5 rounded-xl border transition-all text-right space-y-2.5 ${
+                                isCur
+                                  ? 'bg-cyan-500/15 border-cyan-500/40 shadow-lg shadow-cyan-500/10'
+                                  : 'bg-slate-900/60 border-white/5'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-sm text-white">
+                                  {formatDateArabic(day.date)}
+                                </span>
+                                <span className={`font-mono font-black text-sm ${day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  صافي: EGP {day.netProfit.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-[11px] text-gray-400">
+                                <span>مبيعات: {day.totalSales.toFixed(0)}</span>
+                                <span>مصروفات: {day.totalExpenses.toFixed(0)}</span>
+                                <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-mono font-bold text-[10px]">
+                                  {day.ordersCount} فاتورة
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedReportDate(day.date)}
+                                className={`w-full py-2 rounded-lg text-xs font-bold transition-all text-center ${
+                                  isCur
+                                    ? 'bg-cyan-500 text-black shadow-md'
+                                    : 'bg-white/5 hover:bg-cyan-500/20 text-cyan-300 border border-white/5'
+                                }`}
+                              >
+                                {isCur ? 'المعروض حالياً ✓' : 'عرض تقرير هذا اليوم ↗'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Desktop Table (>= sm) */}
+                      <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5 max-h-96">
+                        <table className="w-full text-right text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                              <th className="p-3.5">تاريخ اليوم</th>
+                              <th className="p-3.5">عدد الفواتير</th>
+                              <th className="p-3.5">إجمالي المبيعات</th>
+                              <th className="p-3.5">إجمالي المصروفات</th>
+                              <th className="p-3.5">صافي الربح</th>
+                              <th className="p-3.5">الحالة</th>
+                              <th className="p-3.5">الإجراء</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dailyReports.map((day) => {
+                              const isCur = effectiveReportDay === day.date;
+                              return (
+                                <tr
+                                  key={day.date}
+                                  className={`border-b border-white/5 transition-colors ${
+                                    isCur ? 'bg-cyan-500/10 text-white font-semibold' : 'hover:bg-white/5 text-gray-300'
+                                  }`}
+                                >
+                                  <td className="p-3.5 font-bold">
+                                    {formatDateArabic(day.date)} <span className="text-gray-500 text-[10px] font-mono">({day.date})</span>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 font-bold font-mono text-xs">
+                                      {day.ordersCount} فاتورة
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5 font-mono font-bold text-cyan-400">
+                                    EGP {day.totalSales.toFixed(2)}
+                                  </td>
+                                  <td className="p-3.5 font-mono font-bold text-rose-400">
+                                    EGP {day.totalExpenses.toFixed(2)}
+                                  </td>
+                                  <td className="p-3.5 font-mono font-bold">
+                                    <span className={day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                      EGP {day.netProfit.toFixed(2)}
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${day.netProfit >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                                      {day.netProfit >= 0 ? 'أرباح' : 'عجز'}
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedReportDate(day.date)}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                                        isCur
+                                          ? 'bg-cyan-500 text-black shadow-md'
+                                          : 'bg-white/5 hover:bg-cyan-500/20 text-cyan-300 border border-white/5'
+                                      }`}
+                                    >
+                                      {isCur ? 'المعروض حالياً ✓' : 'عرض تقرير هذا اليوم ↗'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
+                )}
 
-                  <div className="overflow-x-auto max-h-[450px]">
-                    <table className="w-full text-right text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-900/50 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
-                          <th className="p-3.5">اسم المادة الخام</th>
-                          <th className="p-3.5">الكمية الموردة</th>
-                          <th className="p-3.5">المبلغ الإجمالي</th>
-                          <th className="p-3.5">التاريخ والوقت</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {restockLogs
-                          .filter((log) => !expenseSearch || log.rawMaterial.name.includes(expenseSearch))
-                          .length ? (
-                          restockLogs
-                            .filter((log) => !expenseSearch || log.rawMaterial.name.includes(expenseSearch))
-                            .map((log) => (
-                              <tr key={log.id} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
-                                <td className="p-3.5 font-semibold text-white">
-                                  {log.rawMaterial.name}
-                                </td>
-                                <td className="p-3.5 font-mono text-cyan-300">
-                                  {log.quantity} {log.rawMaterial.purchaseUnit}
-                                </td>
-                                <td className="p-3.5 font-bold font-mono text-amber-400 text-sm">
-                                  EGP {log.amount.toFixed(2)}
-                                </td>
-                                <td className="p-3.5 font-mono text-gray-400 text-[11px]">
-                                  {new Date(log.createdAt).toLocaleString('ar-EG', {
-                                    year: 'numeric',
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </td>
-                              </tr>
-                            ))
-                        ) : (
-                          <tr>
-                            <td colSpan={4} className="p-8 text-center text-gray-500 text-xs">
-                              لا توجد فواتير توريد مسجلة مطابقة للبحث.
-                            </td>
-                          </tr>
+                {/* ======================================================== */}
+                {/* 2. MONTHLY REPORT VIEW (التقرير الشهري الشامل) */}
+                {/* ======================================================== */}
+                {reportsSubTab === 'monthly' && (
+                  <div className="space-y-4 sm:space-y-6">
+                    {/* Month Picker */}
+                    <div className="glass-panel rounded-2xl p-3 sm:p-4 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-3 text-right no-print" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
+                        <div className="flex items-center justify-between sm:justify-start gap-2">
+                          <span className="text-xs font-bold text-white shrink-0">اختر الشهر:</span>
+                          <div className="bg-slate-900 border border-purple-500/40 px-3 py-1.5 rounded-xl flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-purple-400 shrink-0" />
+                            <select
+                              value={effectiveReportMonth}
+                              onChange={(e) => setSelectedReportMonth(e.target.value)}
+                              className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer"
+                            >
+                              {monthlyReports.map((m) => (
+                                <option key={m.month} value={m.month} className="bg-slate-900 text-white">
+                                  {formatMonthArabic(m.month)} ({m.month})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <span className="text-xs text-purple-300 font-bold bg-purple-500/10 border border-purple-500/20 px-3 py-1.5 rounded-xl text-center sm:text-right shrink-0">
+                        {monthDaysList.length} أيام مسجلة في هذا الشهر
+                      </span>
+                    </div>
+
+                    {/* Monthly KPI Cards */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-6 text-right border-purple-500/30" dir="rtl">
+                      <div className="border-b border-white/10 pb-3 sm:pb-4">
+                        <h3 className="text-base sm:text-xl font-black text-white">
+                          التقرير الشامل لشهر: {formatMonthArabic(effectiveReportMonth)} ({effectiveReportMonth})
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-gray-400 mt-1">
+                          ملخص المبيعات، المصروفات، وصافي الأرباح التراكمية لشهر {formatMonthArabic(effectiveReportMonth)}.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mt-4 sm:mt-5">
+                        <div className="glass-panel rounded-xl p-3.5 sm:p-4 text-right">
+                          <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">إجمالي مبيعات الشهر</span>
+                          <p className="text-lg sm:text-2xl font-black text-white mt-1 font-mono truncate">
+                            EGP {activeMonthReport.totalSales.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] sm:text-[10px] text-gray-400 mt-1 block font-mono truncate">
+                            كاش: {activeMonthReport.cashSales.toFixed(0)} | إنستا: {activeMonthReport.instaPaySales.toFixed(0)}
+                          </span>
+                        </div>
+
+                        <div className="glass-panel rounded-xl p-3.5 sm:p-4 text-right">
+                          <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">إجمالي مصروفات الشهر</span>
+                          <p className="text-lg sm:text-2xl font-black text-rose-400 mt-1 font-mono truncate">
+                            EGP {activeMonthReport.totalExpenses.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] sm:text-[10px] text-gray-400 mt-1 block truncate">
+                            مسحوبات كاشير + مشتريات خامات
+                          </span>
+                        </div>
+
+                        <div className="glass-panel rounded-xl p-3.5 sm:p-4 text-right">
+                          <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">صافي أرباح الشهر</span>
+                          <p className={`text-lg sm:text-2xl font-black mt-1 font-mono truncate ${activeMonthReport.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            EGP {activeMonthReport.netProfit.toFixed(2)}
+                          </p>
+                          <span className="text-[9px] sm:text-[10px] text-gray-400 mt-1 block truncate">
+                            هامش الربح: {activeMonthReport.totalSales > 0 ? ((activeMonthReport.netProfit / activeMonthReport.totalSales) * 100).toFixed(1) : 0}%
+                          </span>
+                        </div>
+
+                        <div className="glass-panel rounded-xl p-3.5 sm:p-4 text-right">
+                          <span className="text-[11px] sm:text-xs text-gray-400 font-semibold block">إجمالي الفواتير</span>
+                          <p className="text-lg sm:text-2xl font-black text-purple-300 mt-1 font-mono truncate">
+                            {activeMonthReport.ordersCount} <span className="text-xs font-normal text-gray-400">فاتورة</span>
+                          </p>
+                          <span className="text-[9px] sm:text-[10px] text-gray-400 mt-1 block truncate">
+                            متوسط الفاتورة: EGP {(activeMonthReport.ordersCount > 0 ? activeMonthReport.totalSales / activeMonthReport.ordersCount : 0).toFixed(1)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sub-view switcher for Monthly Report */}
+                    <div className="glass-panel rounded-2xl p-4 sm:p-5 text-right space-y-4" dir="rtl">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                        <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-white/5 w-full sm:w-auto gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setMonthlyReportViewMode('items')}
+                            className={`py-2 px-3 sm:px-3.5 rounded-lg text-xs font-bold transition-all text-center whitespace-nowrap ${
+                              monthlyReportViewMode === 'items'
+                                ? 'bg-purple-500 text-white shadow-md'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            🛒 مبيعات الأصناف التراكمية
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setMonthlyReportViewMode('days')}
+                            className={`py-2 px-3 sm:px-3.5 rounded-lg text-xs font-bold transition-all text-center whitespace-nowrap ${
+                              monthlyReportViewMode === 'days'
+                                ? 'bg-purple-500 text-white shadow-md'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            📅 جدول أيام الشهر (يوم بيوم)
+                          </button>
+                        </div>
+
+                        {monthlyReportViewMode === 'items' && (
+                          <div className="w-full sm:w-56">
+                            <input
+                              type="text"
+                              value={monthlyReportItemSearch}
+                              onChange={(e) => setMonthlyReportItemSearch(e.target.value)}
+                              placeholder="بحث في أصناف الشهر..."
+                              className="w-full bg-slate-900 border border-white/10 rounded-xl py-1.5 px-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-right"
+                            />
+                          </div>
                         )}
-                      </tbody>
-                    </table>
+                      </div>
+
+                      {/* 1. Month Items Sold Total */}
+                      {monthlyReportViewMode === 'items' && (
+                        <div className="space-y-3">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+                            <span className="text-xs bg-purple-500/10 text-purple-300 font-bold px-3 py-1 rounded-lg border border-purple-500/20 shrink-0">
+                              {activeMonthReport.itemsSold?.length || 0} صنف مختلف · {monthTotalItemsQty} قطعة مباعة في الشهر
+                            </span>
+                            <p className="text-[11px] sm:text-xs text-gray-400">
+                              إجمالي كميات وتوتال مبيعات كل صنف تم بيعه طوال شهر {formatMonthArabic(effectiveReportMonth)}.
+                            </p>
+                          </div>
+
+                          {monthItemsSold.length ? (
+                            <>
+                              {/* Mobile Cards for Month Items (< sm) */}
+                              <div className="sm:hidden space-y-2.5">
+                                {monthItemsSold.map((it) => {
+                                  const pct = activeMonthReport.totalSales > 0 ? (it.total / activeMonthReport.totalSales) * 100 : 0;
+                                  return (
+                                    <div key={it.itemId} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-bold text-sm text-white">{it.name}</span>
+                                        <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-300 font-black font-mono text-xs border border-purple-500/30 shrink-0">
+                                          {it.qty} قطعة
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-xs font-mono text-gray-300">
+                                        <span>سعر الوحدة: EGP {it.unitPrice.toFixed(2)}</span>
+                                        <span className="font-bold text-amber-400 text-sm">
+                                          الإجمالي: EGP {it.total.toFixed(2)}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 pt-1">
+                                        <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                          <div
+                                            className="h-full bg-gradient-to-r from-purple-500 to-cyan-500 rounded-full"
+                                            style={{ width: `${Math.min(pct, 100)}%` }}
+                                          ></div>
+                                        </div>
+                                        <span className="font-mono text-[10px] text-gray-400 shrink-0">
+                                          {pct.toFixed(1)}% من مبيعات الشهر
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Desktop Table (>= sm) */}
+                              <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5">
+                                <table className="w-full text-right text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                                      <th className="p-3.5">اسم الصنف</th>
+                                      <th className="p-3.5">الكمية المباعة في الشهر</th>
+                                      <th className="p-3.5">سعر الوحدة</th>
+                                      <th className="p-3.5">إجمالي المبيعات</th>
+                                      <th className="p-3.5">النسبة من مبيعات الشهر</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {monthItemsSold.map((it) => {
+                                      const pct = activeMonthReport.totalSales > 0 ? (it.total / activeMonthReport.totalSales) * 100 : 0;
+                                      return (
+                                        <tr key={it.itemId} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
+                                          <td className="p-3.5 font-bold text-white text-sm">
+                                            {it.name}
+                                          </td>
+                                          <td className="p-3.5">
+                                            <span className="px-3 py-1 rounded-lg bg-purple-500/15 text-purple-300 font-black font-mono text-sm border border-purple-500/20">
+                                              {it.qty} <span className="text-[10px] font-normal">قطعة / علبة</span>
+                                            </span>
+                                          </td>
+                                          <td className="p-3.5 font-mono text-gray-300">
+                                            EGP {it.unitPrice.toFixed(2)}
+                                          </td>
+                                          <td className="p-3.5 font-mono font-black text-amber-400 text-sm">
+                                            EGP {it.total.toFixed(2)}
+                                          </td>
+                                          <td className="p-3.5 min-w-[150px]">
+                                            <div className="flex items-center gap-2">
+                                              <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                                                <div
+                                                  className="h-full bg-gradient-to-r from-purple-500 to-cyan-500 rounded-full"
+                                                  style={{ width: `${Math.min(pct, 100)}%` }}
+                                                ></div>
+                                              </div>
+                                              <span className="font-mono text-[11px] text-gray-400 w-10 text-left">
+                                                {pct.toFixed(1)}%
+                                              </span>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="py-8 text-center text-xs text-gray-500 bg-slate-900/30 rounded-xl">
+                              لا توجد أصناف مباعة مسجلة في هذا الشهر.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 2. Month Days Breakdown (جدول أيام الشهر) */}
+                      {monthlyReportViewMode === 'days' && (
+                        <div className="space-y-3">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+                            <span className="text-xs bg-purple-500/10 text-purple-300 font-bold px-3 py-1 rounded-lg border border-purple-500/20 shrink-0">
+                              {monthDaysList.length} أيام بيع ونشاط في هذا الشهر
+                            </span>
+                            <p className="text-[11px] sm:text-xs text-gray-400">
+                              تفاصيل مبيعات ومصروفات كل يوم من أيام شهر {formatMonthArabic(effectiveReportMonth)} على حدة.
+                            </p>
+                          </div>
+
+                          {monthDaysList.length ? (
+                            <>
+                              {/* Mobile Cards for Month Days (< sm) */}
+                              <div className="sm:hidden space-y-2.5">
+                                {monthDaysList.map((day) => (
+                                  <div key={day.date} className="p-3.5 rounded-xl bg-slate-900/90 border border-white/10 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-bold text-sm text-white">
+                                        {formatDateArabic(day.date)}
+                                      </span>
+                                      <span className={`font-mono font-bold text-sm ${day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        صافي: EGP {day.netProfit.toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[11px] text-gray-400">
+                                      <span>مبيعات: {day.totalSales.toFixed(0)}</span>
+                                      <span>مصروفات: {day.totalExpenses.toFixed(0)}</span>
+                                      <span className="px-2 py-0.5 rounded bg-white/5 font-mono text-[10px]">
+                                        {day.ordersCount} طلب
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReportsSubTab('daily');
+                                        setSelectedReportDate(day.date);
+                                      }}
+                                      className="w-full py-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500 text-cyan-300 hover:text-black font-bold text-xs transition-all text-center"
+                                    >
+                                      عرض التقرير اليومي لهذا اليوم ↗
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Desktop Table (>= sm) */}
+                              <div className="hidden sm:block overflow-x-auto rounded-xl border border-white/5">
+                                <table className="w-full text-right text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-900/80 border-b border-white/5 text-gray-400 sticky top-0 backdrop-blur-md">
+                                      <th className="p-3.5">اليوم</th>
+                                      <th className="p-3.5">عدد الفواتير</th>
+                                      <th className="p-3.5">إجمالي المبيعات</th>
+                                      <th className="p-3.5">إجمالي المصروفات</th>
+                                      <th className="p-3.5">صافي الربح</th>
+                                      <th className="p-3.5">الإجراء</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {monthDaysList.map((day) => (
+                                      <tr key={day.date} className="border-b border-white/5 hover:bg-white/5 text-gray-300 transition-colors">
+                                        <td className="p-3.5 font-bold text-white">
+                                          {formatDateArabic(day.date)} <span className="text-gray-500 text-[10px] font-mono">({day.date})</span>
+                                        </td>
+                                        <td className="p-3.5">
+                                          <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 font-mono font-bold text-xs">
+                                            {day.ordersCount} فاتورة
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5 font-mono font-bold text-white">
+                                          EGP {day.totalSales.toFixed(2)}
+                                        </td>
+                                        <td className="p-3.5 font-mono font-bold text-rose-400">
+                                          EGP {day.totalExpenses.toFixed(2)}
+                                        </td>
+                                        <td className="p-3.5 font-mono font-bold">
+                                          <span className={day.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                            EGP {day.netProfit.toFixed(2)}
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setReportsSubTab('daily');
+                                              setSelectedReportDate(day.date);
+                                            }}
+                                            className="px-3 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500 text-cyan-300 hover:text-black font-bold text-xs transition-all"
+                                          >
+                                            فتح اليوم ↗
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="py-8 text-center text-xs text-gray-500 bg-slate-900/30 rounded-xl">
+                              لا توجد أيام مسجلة لهذا الشهر.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
         </div>
       </main>
